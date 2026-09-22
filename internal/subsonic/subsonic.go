@@ -394,9 +394,59 @@ h.writeOK(w, r, map[string]any{})
 }
 
 func songToMap(s *db.Song) map[string]any {
-	return map[string]any{
-		"id": s.ID, "title": s.Title, "artist": s.Artist,
-		"album": s.Album, "duration": s.Dur, "isDir": false,
-		"suffix": strings.ToLower(s.Fmt),
+	ct := "audio/mpeg"
+	switch strings.ToLower(s.Fmt) {
+	case "flac":
+		ct = "audio/flac"
+	case "mp3":
+		ct = "audio/mpeg"
+	case "m4a", "aac":
+		ct = "audio/mp4"
+	case "ogg":
+		ct = "audio/ogg"
+	case "opus":
+		ct = "audio/opus"
+	case "wav":
+		ct = "audio/wav"
 	}
+	albumID := slugify(s.Album)
+	artistID := slugify(s.Artist)
+	return map[string]any{
+		"id":          s.ID,
+		"parent":      albumID,
+		"isDir":       false,
+		"title":       s.Title,
+		"album":       s.Album,
+		"artist":      s.Artist,
+		"track":       0,
+		"year":        0,
+		"genre":       s.Genre,
+		"coverArt":    s.ID,
+		"size":        0,
+		"contentType": ct,
+		"suffix":      strings.ToLower(s.Fmt),
+		"duration":    s.Dur,
+		"bitRate":     0,
+		"path":        s.Path,
+		"albumId":     albumID,
+		"artistId":    artistID,
+		"type":        "music",
+		"created":     "2024-01-01T00:00:00.000Z",
+		"isVideo":     false,
+	}
+}
+
+func slugify(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r == ' ' {
+			b.WriteByte('-')
+		} else if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r > 127 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
