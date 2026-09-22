@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/icezxf/musicon-go/internal/alist"
@@ -32,10 +33,15 @@ func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
+	// 公开接口（不需要 Web 会话）
 	mux.HandleFunc("/api/web-auth/login", h.login)
 	mux.HandleFunc("/api/web-auth/logout", h.logout)
 	mux.HandleFunc("/api/web-auth/session", h.session)
 	mux.HandleFunc("/api/artist/image", h.artistImage)
+	mux.HandleFunc("/api/covers/thumb/", h.coverThumb)
+	mux.HandleFunc("/api/songs/", h.songPublic)
+
+	// 需要 Web 会话
 	mux.HandleFunc("/api/", h.authWrap(h.handle))
 }
 
@@ -49,6 +55,56 @@ func (h *Handler) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// ---- 公开接口：封面缩略图 ----
+// URL: /api/covers/thumb/{size}/{filename}
+func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/covers/thumb/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "bad path", 400)
+		return
+	}
+	filename := parts[1]
+
+	// 安全校验：只允许字母数字和 .-_ 
+	for _, c := range filename {
+		if !(c == '.' || c == '-' || c == '_' ||
+			(c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z')) {
+			http.Error(w, "bad filename", 400)
+			return
+		}
+	}
+
+	p := filepath.Join(h.Cfg.DataDir, "covers", filename)
+	http.ServeFile(w, r, p)
+}
+
+// ---- 公开接口：歌曲相关（stream 需要 <audio> 直接访问，不带 cookie 也能播） ----
+// URL: /api/songs/{id}/stream  →  302 到 AList 直链
+func (h *Handler) songPublic(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/songs/")
+
+	if strings.HasSuffix(rest, "/stream") {
+		id := strings.TrimSuffix(rest, "/stream")
+		s, err := h.DB.GetSong(id)
+		if err != nil {
+			writeJSON(w, 404, map[string]any{"detail": "Song not found"})
+			return
+		}
+		url, err := h.AList.GetRawURL(s.Path)
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"detail": err.Error()})
+			return
+		}
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
+
+	writeJSON(w, 404, map[string]any{"detail": "Not Found"})
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
@@ -56,7 +112,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 
-	// 优先用 DB 里的，回退到环境变量
 	dbUser := h.Settings.Get("web_user")
 	dbPass := h.Settings.Get("web_pass")
 	if dbUser == "" {
@@ -104,6 +159,8 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
+	case p == "/api/songs/top" && r.Method == "GET":
+		h.listSongs(w, r) // 简化：返回全部
 
 	case p == "/api/playlists" && r.Method == "GET":
 		h.listPlaylists(w, r)
@@ -152,8 +209,6 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
 	}
 }
-
-// ---- 歌曲 / 歌单 ----
 
 func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
 	songs, err := h.DB.ListSongs()
@@ -227,8 +282,6 @@ func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "歌单已删除"})
 }
 
-// ---- Subsonic 账号 ----
-
 func (h *Handler) listSubUsers(w http.ResponseWriter, r *http.Request) {
 	rows, _ := h.DB.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
 	defer rows.Close()
@@ -295,8 +348,6 @@ func (h *Handler) deleteSubUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "已删除"})
 }
 
-// ---- 艺术家 ----
-
 func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	d, err := h.LX.GetSingerDetail(name)
@@ -325,8 +376,6 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-// ---- 任务 ----
-
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 	ts, _ := h.DB.ListScanTasks(50)
 	writeJSON(w, 200, map[string]any{"tasks": ts})
@@ -343,9 +392,7 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "path 必填"})
 		return
 	}
-	// 存下最近的扫描路径
 	h.Settings.Set("last_scan_path", body.Path)
-
 	taskID, err := h.DB.CreateScanTask(body.Path, body.Mode, body.Source)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
@@ -355,41 +402,14 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "扫描任务已创建", "task_id": taskID})
 }
 
-// ---- 设置 ----
-
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 	all := h.Settings.GetAll()
-
-	// 脱敏 secret
 	for _, k := range []string{"alist_password", "web_pass", "subsonic_pass"} {
 		if v, ok := all[k]; ok && v != "" {
 			all["has_"+k] = "true"
 			all[k] = ""
 		}
 	}
-
-	// 补充 storage_providers 脱敏
-	if raw, ok := all["storage_providers"]; ok && raw != "" {
-		var list []map[string]any
-		if json.Unmarshal([]byte(raw), &list) == nil {
-			for _, p := range list {
-				if cfg, ok := p["config"].(map[string]any); ok {
-					if pw, ok := cfg["refresh_password"].(string); ok && pw != "" {
-						cfg["has_refresh_password"] = true
-						cfg["refresh_password"] = ""
-					}
-					if t, ok := cfg["token"].(string); ok && t != "" {
-						cfg["has_token"] = true
-						cfg["token"] = ""
-					}
-				}
-			}
-			if b, err := json.Marshal(list); err == nil {
-				all["storage_providers"] = string(b)
-			}
-		}
-	}
-
 	writeJSON(w, 200, map[string]any{"settings": all})
 }
 
@@ -400,7 +420,6 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 	save := func(k string, v any) {
 		switch x := v.(type) {
 		case string:
-			// 空值跳过（是脱敏字段没改）
 			if x == "" && (k == "alist_password" || k == "web_pass" || k == "subsonic_pass") {
 				return
 			}
@@ -423,14 +442,7 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		save(k, v)
 	}
 
-	// 如果改了 storage_providers 且里面有 AList 密码，清空 token 强制重新登录
 	if _, ok := body["storage_providers"]; ok {
-		// 但空密码要保留原值
-		raw := h.Settings.Get("storage_providers")
-		var list []map[string]any
-		if json.Unmarshal([]byte(raw), &list) == nil {
-			// 与 DB 里之前的值合并——简化起见，先不做复杂合并
-		}
 		h.Settings.Set("alist_token", "")
 	}
 
@@ -453,8 +465,6 @@ func (h *Handler) testStorage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---- 统计 ----
-
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"total_songs": h.DB.CountSongs()})
 }
@@ -463,8 +473,6 @@ func (h *Handler) recentPlays(w http.ResponseWriter, r *http.Request) {
 	rows, _ := h.DB.RecentPlays(10)
 	writeJSON(w, 200, map[string]any{"plays": rows})
 }
-
-// ---- 工具 ----
 
 func writeJSON(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
