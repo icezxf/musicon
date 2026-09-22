@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/icezxf/musicon-go/internal/alist"
@@ -54,9 +55,8 @@ func (h *Handler) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ---------- 公开 ----------
+// ---------- 公开接口 ----------
 
-// GET /api/songs/{id}/stream → 302
 func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -127,7 +127,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"username": user})
 }
 
-// ---------- 路由 ----------
+// ---------- 路由分发 ----------
 
 func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSuffix(r.URL.Path, "/")
@@ -173,6 +173,10 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	// 艺术家
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
+
+	// AList 目录树
+	case p == "/api/alist/list" && r.Method == "GET":
+		h.alistList(w, r)
 
 	// 元数据搜索/歌词
 	case p == "/api/music/metadata-search" && r.Method == "GET":
@@ -426,6 +430,78 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, resp.Body)
+}
+
+// ---------- AList 目录树 ----------
+
+// GET /api/alist/list?path=/xxx
+func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+	entries, err := h.AList.List(path)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	dirs := []map[string]any{}
+	for _, e := range entries {
+		if e.IsDir {
+			dirs = append(dirs, map[string]any{
+				"name": e.Name,
+				"path": strings.TrimRight(path, "/") + "/" + e.Name,
+			})
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		return dirs[i]["name"].(string) < dirs[j]["name"].(string)
+	})
+	writeJSON(w, 200, map[string]any{
+		"path": path,
+		"dirs": dirs,
+	})
+}
+
+// ---------- 元数据搜索 ----------
+
+func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
+	kw := r.URL.Query().Get("keyword")
+	if kw == "" {
+		writeJSON(w, 400, map[string]any{"detail": "keyword required"})
+		return
+	}
+	lxURL := h.Settings.GetLXURL()
+	u := strings.TrimRight(lxURL, "/") + "/api/music/search?source=tx&name=" + url.QueryEscape(kw) + "&type=song"
+	resp, err := http.Get(u)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data any
+	json.NewDecoder(resp.Body).Decode(&data)
+	writeJSON(w, 200, map[string]any{"results": data})
+}
+
+func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
+	source := r.URL.Query().Get("source")
+	songID := r.URL.Query().Get("songId")
+	if source == "" || songID == "" {
+		writeJSON(w, 400, map[string]any{"detail": "source and songId required"})
+		return
+	}
+	lxURL := h.Settings.GetLXURL()
+	u := strings.TrimRight(lxURL, "/") + "/api/music/lyric?source=" + url.QueryEscape(source) + "&songId=" + url.QueryEscape(songID)
+	resp, err := http.Get(u)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data any
+	json.NewDecoder(resp.Body).Decode(&data)
+	writeJSON(w, 200, data)
 }
 
 // ---------- 任务 ----------
