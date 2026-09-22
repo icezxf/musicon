@@ -153,7 +153,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .empty-sub{font-size:13px}
 
 .actionbar{position:absolute;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);
-  display:flex;align-items:center;gap:20px;background:var(--bg-2);
+  display:flex;align-items:center;gap:16px;background:var(--bg-2);
   border:1px solid var(--border-2);border-radius:var(--r-lg);
   padding:10px 12px 10px 20px;box-shadow:0 10px 40px rgba(0,0,0,.5);
   opacity:0;pointer-events:none;transition:all .22s cubic-bezier(.34,1.2,.64,1);
@@ -250,14 +250,11 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 
 /* ============ 移动端适配 v2 ============ */
 @media (max-width: 768px){
-  /* 侧栏 */
   .sidebar{width:280px;box-shadow:4px 0 24px rgba(0,0,0,.5)}
   .brand{padding:16px 14px 12px}
   .brand-name{font-size:14px}
   .nav-section{padding:10px 8px}
   .nav-item{padding:11px 10px;font-size:14.5px}
-
-  /* 主区 */
   .main{height:100vh;overflow:hidden}
   .topbar{padding:12px 12px 8px;gap:8px;flex-wrap:wrap}
   .topbar-title{font-size:16px;max-width:100%;flex:1 1 100%;margin-bottom:4px;order:-1}
@@ -265,8 +262,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .topbar-actions{flex:1 1 100%;order:2;gap:6px}
   .topbar-actions .select{flex:1;height:34px;font-size:12.5px;padding-left:8px}
   #btn-menu{order:-2;display:flex !important}
-
-  /* 工具栏 */
   .toolbar{padding:8px 12px;gap:8px;flex-wrap:wrap}
   .sel-info{font-size:12.5px;flex:1 1 100%}
   .toolbar-actions{flex:1 1 100%;justify-content:flex-start;gap:4px}
@@ -275,8 +270,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .pager{flex-wrap:wrap;justify-content:center}
   .pager button{min-width:28px;height:26px;padding:0 6px;font-size:11.5px}
   .pager .pg-info{font-size:11px;margin-left:4px}
-
-  /* 列表：表头隐藏，行改成卡片 */
   .list-wrap{padding:0 8px 120px}
   .list-header{display:none}
   .row{
@@ -287,8 +280,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   }
   .row.selected{background:var(--accent-soft);border-color:var(--accent)}
   .row:hover{background:var(--bg-1)}
-
-  /* 卡片布局：上排 = 勾选 + 封面 + 播放 + 标题区 */
   .row .col-chk{position:absolute;left:12px;top:12px;display:flex}
   .row .col-cover{position:absolute;left:44px;top:12px;display:flex}
   .row .col-play{position:absolute;right:12px;top:12px;display:flex}
@@ -303,18 +294,12 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .row .col-prov{display:inline-flex;position:absolute;right:60px;bottom:12px;font-size:10.5px;height:18px;padding:0 6px}
   .row .play-btn{width:36px;height:36px}
   .row .play-btn svg{width:15px;height:15px}
-
-  /* 侧栏打开时显示遮罩 */
   .sidebar.open::after{content:"";position:fixed;left:280px;top:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:-1}
-
-  /* 底部操作条 */
   .actionbar{bottom:78px;left:12px;right:12px;transform:none;padding:10px 12px;gap:10px;max-width:none}
   .actionbar.show{transform:none}
   .actionbar-info{font-size:12.5px;flex:1}
   .actionbar-btns{gap:6px}
   .btn-primary,.btn-danger{padding:8px 12px;font-size:12.5px}
-
-  /* 播放条 */
   .player{padding:8px 10px;gap:10px;flex-wrap:wrap}
   .player-info{flex:1 1 100%;gap:8px}
   .player-cover{width:36px;height:36px}
@@ -324,8 +309,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .player-ctrl button{width:32px;height:32px}
   .player-progress{flex:1 1 auto;font-size:11px;gap:6px}
   .player-progress input[type=range]{min-width:60px}
-
-  /* 艺术家/专辑网格 */
   .grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;padding:4px 0}
   .gcard{padding:10px}
   .gcard-avatar,.gcard-cover{font-size:24px}
@@ -333,29 +316,28 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .gcard-avatar{width:80%;height:80%}
   .gcard-name{font-size:12.5px}
   .gcard-sub{font-size:10.5px}
-
-  /* 任务/设置卡片 */
   .card{padding:12px 14px}
   .field{font-size:12.5px;flex-direction:column;gap:2px;padding:8px 0}
   .field-label{width:100%;font-size:11px}
   .field-value{font-size:13px}
   [data-section] .grid,[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important}
   .lbl{font-size:11px}
-
-  /* Modal */
   .modal{padding:20px;width:calc(100vw - 32px);max-width:400px}
   .modal-title{font-size:15px;margin-bottom:14px}
   .modal .input,.modal .select{height:36px;font-size:13.5px}
   .modal-actions{gap:8px}
   .modal-actions .btn-primary,.modal-actions .btn-ghost{padding:8px 14px;font-size:13px}
-
-  /* 顶栏菜单按钮更明显 */
   .icon-btn{width:36px;height:36px}
   #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
-
-  /* 主区滚动 */
   #view-artists, #view-albums{overflow-y:auto}
 }
+
+/* ============ 扫描目录浏览器 ============ */
+.scan-dir-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;cursor:pointer;transition:background .1s}
+.scan-dir-item:hover{background:rgba(255,255,255,.05)}
+.scan-dir-item svg{flex-shrink:0;color:var(--accent)}
+.scan-dir-item .scan-dir-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scan-dir-item .scan-dir-hint{color:var(--text-3);font-size:12px;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -427,8 +409,10 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <input id="search" placeholder="搜索标题、艺术家、专辑…" autocomplete="off">
       </div>
       <div class="topbar-actions">
+        <button class="btn-primary" id="btn-add-songs-to-playlist" style="display:none" title="向当前歌单添加歌曲">+ 添加歌曲</button>
         <select class="select" id="f-provider"><option value="">全部音源</option></select>
-        <select class="select" id="f-format"><option value="">全部格式</option></select><select class="select" id="page-size">
+        <select class="select" id="f-format"><option value="">全部格式</option></select>
+        <select class="select" id="page-size">
           <option value="20">每页 20</option>
           <option value="50" selected>每页 50</option>
           <option value="100">每页 100</option>
@@ -449,7 +433,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
       </div>
     </div>
 
-    <!-- 歌曲视图 -->
     <div class="list-wrap" id="view-songs">
       <div class="list-header">
         <div></div><div style="text-align:center">#</div><div></div><div></div>
@@ -460,7 +443,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
       </div>
     </div>
 
-    <!-- 艺术家视图 -->
     <div class="list-wrap" id="view-artists" style="display:none">
       <div style="padding:16px 0 8px;display:flex;align-items:center;gap:12px">
         <input id="artists-search" class="input" placeholder="搜索艺术家…" style="width:280px;height:36px;padding:0 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);color:var(--text)">
@@ -470,7 +452,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
       <div id="artists-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div></div></div>
     </div>
 
-    <!-- 专辑视图 -->
     <div class="list-wrap" id="view-albums" style="display:none">
       <div style="padding:16px 0 8px;display:flex;align-items:center;gap:12px">
         <input id="albums-search" class="input" placeholder="搜索专辑…" style="width:280px;height:36px;padding:0 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);color:var(--text)">
@@ -480,7 +461,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
       <div id="albums-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div></div></div>
     </div>
 
-    <!-- 任务视图 -->
     <div class="list-wrap" id="view-tasks" style="display:none">
       <div style="display:flex;align-items:center;gap:12px;padding:12px 0 16px">
         <button class="btn-primary" id="btn-new-scan">+ 新建扫描</button>
@@ -489,11 +469,9 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
       <div id="tasks-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div></div></div>
     </div>
 
-    <!-- 设置视图 -->
     <div class="list-wrap" id="view-settings" style="display:none">
       <div style="padding:12px 0 16px;max-width:760px">
         <div style="display:flex;gap:12px;margin-bottom:20px">
-          <button class="btn-primary" id="btn-legacy-settings">打开原设置页</button>
           <button class="btn-ghost" id="btn-refresh-settings">刷新</button>
         </div>
         <div id="settings-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div><div class="sk-row"></div></div></div>
@@ -502,10 +480,13 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 
     <div class="actionbar" id="actionbar">
       <div class="actionbar-info">已选 <b id="ab-cnt">0</b> 首</div>
+      <select id="ab-playlist-select" style="height:34px;padding:0 32px 0 10px;background:#0d1016;border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml;utf8,<svg xmlns=&#39;http://www.w3.org/2000/svg&#39; width=&#39;12&#39; height=&#39;12&#39; viewBox=&#39;0 0 24 24&#39; fill=&#39;none&#39; stroke=&#39;%239ba3b0&#39; stroke-width=&#39;2.5&#39; stroke-linecap=&#39;round&#39; stroke-linejoin=&#39;round&#39;><polyline points=&#39;6 9 12 15 18 9&#39;/></svg>&quot;);background-repeat:no-repeat;background-position:right 8px center">
+        <option value="">选择歌单…</option>
+      </select>
       <div class="actionbar-btns">
         <button class="btn-ghost" id="ab-clear">取消选择</button>
         <button class="btn-danger" id="ab-remove" style="display:none">从歌单移除</button>
-        <button class="btn-primary" id="ab-add" style="display:none">加入歌单</button>
+        <button class="btn-primary" id="ab-add">加入歌单</button>
       </div>
     </div>
 
@@ -556,34 +537,31 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
-<!-- 新建扫描弹窗 -->
+<!-- 新建扫描弹窗（目录浏览器） -->
 <div class="modal-bg" id="scan-modal">
-  <div class="modal">
+  <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
-    <label>
-      <div class="lbl">扫描路径</div>
-      <input id="scan-path" class="input" placeholder="/移动/自主目录/音乐">
-    </label>
-    <label>
-      <div class="lbl">模式</div>
-      <select id="scan-mode" class="select">
-        <option value="full">full（全量）</option>
-        <option value="incremental">incremental（增量）</option>
-      </select>
-    </label>
-    <label>
-      <div class="lbl">音源 Provider ID（留空用默认）</div>
-      <input id="scan-source" class="input" placeholder="alist-1">
-    </label>
-    <div class="modal-actions">
-      <button class="btn-ghost" id="scan-cancel">取消</button>
-      <button class="btn-primary" id="scan-submit">开始扫描</button>
+
+    <div class="lbl">当前路径</div>
+    <div id="scan-cur-path" style="font-family:monospace;font-size:13px;padding:10px 12px;background:#0d1016;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;word-break:break-all;color:var(--accent-h)">/</div>
+
+    <div id="scan-tree" style="max-height:320px;overflow-y:auto;background:#0d1016;border:1px solid var(--border);border-radius:6px;padding:6px">
+      <div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">加载中…</div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:14px;justify-content:space-between">
+      <button class="btn-ghost" id="scan-up">← 上级目录</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn-ghost" id="scan-cancel">取消</button>
+        <button class="btn-primary" id="scan-submit">选择此目录扫描</button>
+      </div>
     </div>
   </div>
 </div>
 
 <audio id="player"></audio>
 <div class="toast" id="toast"></div>
+
 <script>
 (function(){
 'use strict';
@@ -705,25 +683,16 @@ function currentList(){ return state.view === 'playlist' ? state.playlistTracks 
 function matchesFilter(s){
   if (state.filterArtist && (s.artist || '') !== state.filterArtist) return false;
   if (state.filterAlbum && (s.album || '') !== state.filterAlbum) return false;
-
   const isV = (s.fmt === 'VIRTUAL') || String(s.id || '').startsWith('lxv-');
-
   const prov = $('#f-provider') ? $('#f-provider').value : '';
   const fmt = $('#f-format') ? $('#f-format').value : '';
   const src = $('#f-source') ? $('#f-source').value : '';
   const q = ($('#search') ? $('#search').value : '').trim().toLowerCase();
-
-  // 选了具体 provider → 排除虚拟曲目（它们不在该 provider 里）
   if (prov && isV) return false;
   if (prov && s.provider_id !== prov) return false;
-
-  // 来源筛选
   if (src === 'local' && isV) return false;
   if (src === 'virtual' && !isV) return false;
-
-  // 格式筛选（虚拟曲目没有 FLAC/MP3 格式，会被自然排除）
   if (fmt && (s.fmt || '').toUpperCase() !== fmt) return false;
-
   if (q){
     const hay = ((s.title||'') + ' ' + (s.artist||'') + ' ' + (s.album||'') + ' ' + (s.path||'')).toLowerCase();
     if (!hay.includes(q)) return false;
@@ -817,24 +786,51 @@ function renderPager(pages, total){
   });
 }
 
-
 function updateCounters(){
   const n = state.selected.size;
-  $('#cnt-sel').textContent = n;
-  $('#cnt-total').textContent = currentList().length;
-  $('#ab-cnt').textContent = n;
-  $('#actionbar').classList.toggle('show', n > 0 && state.mainView === 'songs');
+  const cntSel = document.getElementById('cnt-sel');
+  const cntTot = document.getElementById('cnt-total');
+  const abCnt = document.getElementById('ab-cnt');
+  if (cntSel) cntSel.textContent = n;
+  if (cntTot) cntTot.textContent = currentList().length;
+  if (abCnt) abCnt.textContent = n;
+  const ab = document.getElementById('actionbar');
+  if (ab) ab.classList.toggle('show', n > 0 && state.mainView === 'songs');
+
+  // 更新歌单下拉
+  const sel = document.getElementById('ab-playlist-select');
+  if (sel) {
+    const prevVal = sel.value;
+    const opts = state.playlists.map(function(p){
+      const dis = p.is_readonly ? ' disabled' : '';
+      return '<option value="' + esc(p.id) + '"' + dis + '>' + esc(p.name) + (p.is_readonly ? '（只读）' : '') + '</option>';
+    }).join('');
+    sel.innerHTML = '<option value="">选择歌单…</option>' + opts;
+    if (state.view === 'playlist' && state.activePlaylistId) {
+      sel.value = state.activePlaylistId;
+    } else if (prevVal) {
+      sel.value = prevVal;
+    }
+  }
+
   const inPl = state.view === 'playlist' && state.activePlaylistId;
-  const pl = state.playlists.find(p => p.id === state.activePlaylistId);
+  const pl = state.playlists.find(function(p){ return p.id === state.activePlaylistId; });
   const ro = pl && pl.is_readonly;
-  $('#ab-remove').style.display = inPl && !ro ? '' : 'none';
-  $('#ab-add').style.display = inPl && !ro ? '' : 'none';
+  const btnRm = document.getElementById('ab-remove');
+  const btnAdd = document.getElementById('ab-add');
+  if (btnRm) btnRm.style.display = inPl && !ro ? '' : 'none';
+  if (btnAdd) btnAdd.style.display = '';
+
+  // 顶部"+ 添加歌曲"按钮：只在进入某个非只读歌单时显示
+  const btnAddSongs = document.getElementById('btn-add-songs-to-playlist');
+  if (btnAddSongs) {
+    btnAddSongs.style.display = inPl && !ro ? '' : 'none';
+  }
 }
 
 function renderSidebar(){
   $('#nav-all').classList.toggle('active', state.mainView === 'songs' && state.view === 'all');
   $('#count-all').textContent = state.songs.length;
-  // 侧栏艺术家/专辑计数：实时算一次
   try {
     if (typeof aggregateArtists === 'function'){
       const artistsAll = aggregateArtists();
@@ -891,7 +887,6 @@ function setViewTitle(){
   }
 }
 
-/* ---------- 视图切换 ---------- */
 function switchMainView(name){
   state.mainView = name;
   $('#view-songs').style.display = name === 'songs' ? '' : 'none';
@@ -916,7 +911,6 @@ function switchMainView(name){
   saveUIState();
 }
 
-/* ---------- 数据加载 ---------- */
 function saveUIState(){
   try {
     localStorage.setItem('musicon_ui', JSON.stringify({
@@ -1001,7 +995,6 @@ function selectAllView(){
   saveUIState();
 }
 
-/* ---------- 艺术家 / 专辑聚合 ---------- */
 function aggregateArtists(){
   const map = new Map();
   state.songs.forEach(function(s){
@@ -1030,15 +1023,9 @@ function aggregateAlbums(){
 
 function avatarGradient(name){
   const gradients = [
-    ['#6366f1', '#a855f7'],
-    ['#ec4899', '#f43f5e'],
-    ['#06b6d4', '#0ea5e9'],
-    ['#10b981', '#14b8a6'],
-    ['#f59e0b', '#ef4444'],
-    ['#8b5cf6', '#6366f1'],
-    ['#f43f5e', '#f97316'],
-    ['#22c55e', '#84cc16'],
-    ['#0ea5e9', '#6366f1'],
+    ['#6366f1', '#a855f7'], ['#ec4899', '#f43f5e'], ['#06b6d4', '#0ea5e9'],
+    ['#10b981', '#14b8a6'], ['#f59e0b', '#ef4444'], ['#8b5cf6', '#6366f1'],
+    ['#f43f5e', '#f97316'], ['#22c55e', '#84cc16'], ['#0ea5e9', '#6366f1'],
     ['#eab308', '#f97316'],
   ];
   let h = 0;
@@ -1092,23 +1079,8 @@ async function loadOneAvatar(el){
     el.style.backgroundPosition = 'center';
     el.textContent = '';
   };
-  img.onerror = function(){ /* 保留字母头像 */ };
+  img.onerror = function(){};
   img.src = url;
-}
-
-function preloadImage(el, url){
-  return new Promise(function(resolve){
-    const img = new Image();
-    img.onload = function(){
-      el.style.backgroundImage = 'url("' + url + '")';
-      el.style.backgroundSize = 'cover';
-      el.style.backgroundPosition = 'center';
-      el.textContent = '';
-      resolve(true);
-    };
-    img.onerror = function(){ resolve(false); };
-    img.src = url;
-  });
 }
 
 function renderAlbums(){
@@ -1159,31 +1131,62 @@ async function loadTasks(){
         + '<span style="font-size:12px;color:var(--text-3)">' + esc(t.created_at || t.created || '') + '</span>'
         + '</div>'
         + '<div style="font-size:13px;color:var(--text-2);margin-bottom:6px">' + esc(t.path || '(无路径)') + '</div>'
-        + '<div style="font-size:12px;color:var(--text-3)">'
-        + '模式: ' + esc(t.mode || '—')
+        + '<div style="font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:8px">'
+        + '<span>模式: ' + esc(t.mode || '—')
         + (t.total != null ? ' · 总计 ' + t.total : '')
         + (t.count != null ? ' · 已入库 ' + t.count : '')
-        + (t.task_id || t.id ? ' · ID: ' + esc(t.task_id || t.id) : '')
+        + '</span>'
+        + '<span style="flex:1"></span>'
+        + (t.path ? '<button class="btn-ghost btn-rescan" data-path="' + esc(t.path) + '">重新扫描</button>' : '')
         + '</div></div>';
     }).join('') + '</div>';
+
+    // 绑定"重新扫描"
+    box.querySelectorAll('.btn-rescan').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        const path = this.dataset.path;
+        if (!path) return;
+        try {
+          await api('/api/scan', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ path: path, mode: 'full', source: 'alist-1' }) });
+          toast('已重新创建扫描任务', 'ok');
+          await loadTasks();
+        } catch (e){ toast('失败：' + e.message, 'err'); }
+      });
+    });
   } catch (e){
     box.innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
   }
 }
 
-async function triggerScan(){
-  const path = $('#scan-path').value.trim();
-  if (!path) return toast('请输入路径', 'err');
-  const mode = $('#scan-mode').value;
-  const source = $('#scan-source').value.trim();
-  const body = { path, mode, concurrency: 1, batch_size: 50 };
-  if (source) body.source = source;
+/* ---------- 扫描目录浏览器 ---------- */
+let scanCurPath = '/';
+
+async function scanLoadDir(path) {
+  scanCurPath = path;
+  document.getElementById('scan-cur-path').textContent = path || '/';
+  const tree = document.getElementById('scan-tree');
+  tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">加载中…</div>';
   try {
-    await api('/api/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    toast('扫描任务已创建', 'ok');
-    $('#scan-modal').classList.remove('show');
-    await loadTasks();
-  } catch (e){ toast('创建失败：' + e.message, 'err'); }
+    const d = await api('/api/alist/list?path=' + encodeURIComponent(path));
+    const dirs = d.dirs || [];
+    if (!dirs.length) {
+      tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">（没有子目录）</div>';
+      return;
+    }
+    tree.innerHTML = dirs.map(function(dir){
+      return '<div class="scan-dir-item" data-path="' + esc(dir.path) + '">'
+        + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
+        + '<span class="scan-dir-name">' + esc(dir.name) + '</span>'
+        + '<span class="scan-dir-hint">进入 →</span>'
+        + '</div>';
+    }).join('');
+    tree.querySelectorAll('.scan-dir-item').forEach(function(item){
+      item.addEventListener('click', function(){ scanLoadDir(this.dataset.path); });
+    });
+  } catch (e) {
+    tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--danger);font-size:13px">加载失败：' + esc(e.message) + '</div>';
+  }
 }
 
 /* ---------- 设置 ---------- */
@@ -1358,32 +1361,12 @@ async function loadSettings(){
       users = u.users || u.items || [];
     } catch(_){}
 
-    const provOpts = providers.map(function(p){ return { value: p.id, label: p.id + ' · ' + (p.name || p.type || '') }; });
-
     box.innerHTML = ''
       + renderStorageForm(window.__providerState)
       + renderSubsonicPanel(users)
-      + renderFormSection('扫描配置', [
-          { key: 'last_scan_path', label: '扫描根路径', value: st.last_scan_path, placeholder: '/移动/自主目录/音乐' },
-          { key: 'last_scan_provider_id', label: '扫描 Provider', value: st.last_scan_provider_id, type: 'select', options: [{value:'',label:'（默认）'}].concat(provOpts) },
-          { key: 'cron_expr', label: '定时 cron 表达式', value: st.cron_expr, placeholder: '0 3 * * *' },
-          { key: 'cron_mode', label: '定时模式', value: st.cron_mode, type: 'select', options: [{value:'full',label:'full（全量）'},{value:'incremental',label:'incremental（增量）'}] },
-          { key: 'cron_concur', label: '并发数', value: st.cron_concur, placeholder: '10' },
-          { key: 'cron_batch', label: '批大小', value: st.cron_batch, placeholder: '100' },
-          { key: 'autofill_path', label: '自动补全路径', value: st.autofill_path, placeholder: '/MusicOn_AutoDownload/' },
-          { key: 'autofill_provider_id', label: '自动补全 Provider', value: st.autofill_provider_id, type: 'select', options: [{value:'',label:'（默认）'}].concat(provOpts) },
-          { key: 'autofill_quality', label: '自动补全音质', value: st.autofill_quality, type: 'select', options: [
-            {value:'flac',label:'flac（无损）'},{value:'320k',label:'320k'},{value:'128k',label:'128k'}
-          ]}
-        ], 'scan')
       + renderFormSection('LX 音源', [
-          { key: 'lx_service_mode', label: '服务模式', value: st.lx_service_mode, type: 'select', options: [
-            {value:'embedded',label:'内置 embedded'},{value:'remote',label:'远程 remote'}
-          ]},
-          { key: 'lx_server_url', label: '内置服务地址', value: st.lx_server_url, placeholder: 'http://127.0.0.1:9527' },
-          { key: 'lx_remote_url', label: '远程服务地址', value: st.lx_remote_url, placeholder: '（remote 模式时使用）' },
-          { key: 'lx_custom_source_username', label: '自定义源归属用户', value: st.lx_custom_source_username, placeholder: 'open' },
-          { key: 'lx_cron_expr', label: '定时表达式', value: st.lx_cron_expr, placeholder: '5,3 0,12 * * *' }
+          { key: 'lx_server_url', label: '服务地址', value: st.lx_server_url, placeholder: 'http://127.0.0.1:9527' },
+          { key: 'lx_custom_source_username', label: '自定义源归属用户', value: st.lx_custom_source_username, placeholder: 'open' }
         ], 'lx')
       + renderFormSection('缓存与其他', [
           { key: 'range_size_kb', label: 'Range 读取(KB)', value: st.range_size_kb, placeholder: '1024' },
@@ -1391,19 +1374,7 @@ async function loadSettings(){
           { key: 'cache_max_gb', label: '缓存上限(GB)', value: st.cache_max_gb, placeholder: '10' },
           { key: 'subsonic_user', label: '默认 Subsonic 用户名', value: st.subsonic_user, placeholder: 'fire' },
           { key: 'subsonic_pass', label: '默认 Subsonic 密码（留空=不改）', value: '', type: 'password', placeholder: '••••••' }
-        ], 'cache')
-      + renderFormSection('在线热榜开关（重启容器后生效）', [
-          { key: 'enabled_lx-hot',     label: '全网热歌榜',   type: 'checkbox',
-            value: !!(st.curated_playlists_enabled && st.curated_playlists_enabled['lx-hot']) },
-          { key: 'enabled_lx-new',     label: '全网新歌速递', type: 'checkbox',
-            value: !!(st.curated_playlists_enabled && st.curated_playlists_enabled['lx-new']) },
-          { key: 'enabled_lx-viral',   label: '网络爆款风向', type: 'checkbox',
-            value: !!(st.curated_playlists_enabled && st.curated_playlists_enabled['lx-viral']) },
-          { key: 'enabled_lx-classic', label: '岁月经典回声', type: 'checkbox',
-            value: !!(st.curated_playlists_enabled && st.curated_playlists_enabled['lx-classic']) },
-          { key: 'enabled_lx-tiktok',  label: '抖音神曲榜',   type: 'checkbox',
-            value: !!(st.curated_playlists_enabled && st.curated_playlists_enabled['lx-tiktok']) }
-        ], 'curated_playlists');
+        ], 'cache');
 
     bindStorageForm();
     bindSubsonicPanel();
@@ -1413,7 +1384,6 @@ async function loadSettings(){
   }
 }
 
-/* ---------- 通用表单渲染 ---------- */
 function renderFormSection(title, fields, sectionId){
   const rows = fields.map(function(f){
     const key = f.key;
@@ -1465,25 +1435,10 @@ function bindSectionSaves(){
     btn.addEventListener('click', async function(){
       const id = btn.dataset.section;
       let data = collectSection(id);
-
-      // curated_playlists 卡片：把 5 个 enabled_* 拼成 JSON
-      if (id === 'curated_playlists'){
-        const map = {};
-        Object.keys(data).forEach(function(k){
-          if (k.indexOf('enabled_') === 0){
-            map[k.replace('enabled_', '')] = (data[k] === 'true');
-            delete data[k];
-          }
-        });
-        data['curated_playlists_enabled'] = JSON.stringify(map);
-      }
-
-      // 数字型字段
-      ['cron_concur','cron_batch','range_size_kb','cache_ttl_min','cache_max_gb'].forEach(function(k){
+      ['range_size_kb','cache_ttl_min','cache_max_gb'].forEach(function(k){
         if (k in data && data[k] !== '') data[k] = parseInt(data[k], 10) || 0;
       });
       if (data.subsonic_pass === '') delete data.subsonic_pass;
-
       btn.disabled = true; btn.textContent = '保存中…';
       try {
         await api('/api/settings', {
@@ -1500,7 +1455,6 @@ function bindSectionSaves(){
   });
 }
 
-/* ---------- Subsonic 账号管理 ---------- */
 function renderSubsonicPanel(users){
   const list = users.map(function(u){
     const role = u.role || 'user';
@@ -1571,10 +1525,14 @@ function bindSubsonicPanel(){
     });
   });
 }
+
 /* ---------- 加/删歌 ---------- */
 async function addToPlaylist(){
-  const pl = state.playlists.find(p => p.id === state.activePlaylistId);
-  if (!pl) return toast('请先选择歌单', 'err');
+  const sel = document.getElementById('ab-playlist-select');
+  const plId = (sel && sel.value) || state.activePlaylistId;
+  if (!plId) { toast('请先选择要加入的歌单', 'err'); return; }
+  const pl = state.playlists.find(function(p){ return p.id === plId; });
+  if (!pl) return toast('歌单不存在', 'err');
   if (pl.is_readonly) return toast('该歌单只读', 'err');
   await loadPlaylistTracks(pl.id);
   const inList = new Set(state.playlistTracks.map(t => t.id));
@@ -1670,8 +1628,8 @@ $('#pl-seek').addEventListener('input', e => {
 
 /* ---------- 事件绑定 ---------- */
 $('#nav-all').addEventListener('click', selectAllView);
-if ($('#nav-artists')) if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; switchMainView('artists'); });
-if ($('#nav-albums')) if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; switchMainView('albums'); });
+if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; switchMainView('artists'); });
+if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; switchMainView('albums'); });
 
 if ($('#artists-search')) $('#artists-search').addEventListener('input', debounce(renderArtists, 150));
 if ($('#albums-search')) $('#albums-search').addEventListener('input', debounce(renderAlbums, 150));
@@ -1723,7 +1681,6 @@ $('#btn-refresh-pl').addEventListener('click', async () => {
 });
 
 $('#list-body').addEventListener('click', e => {
-  // 播放按钮优先
   const pbtn = e.target.closest('.play-btn');
   if (pbtn){
     e.stopPropagation();
@@ -1756,6 +1713,32 @@ $('#btn-clear').addEventListener('click', () => { state.selected.clear(); render
 $('#ab-clear').addEventListener('click', () => { state.selected.clear(); render(); });
 $('#ab-add').addEventListener('click', addToPlaylist);
 $('#ab-remove').addEventListener('click', removeFromPlaylist);
+if (document.getElementById('ab-playlist-select')) {
+  document.getElementById('ab-playlist-select').addEventListener('change', function(){
+    state.activePlaylistId = this.value || state.activePlaylistId;
+  });
+}
+
+// "+ 添加歌曲"按钮：跳到全部歌曲视图，目标歌单保持
+document.addEventListener('click', function(e){
+  const btn = e.target.closest('#btn-add-songs-to-playlist');
+  if (!btn) return;
+  e.preventDefault();
+  const targetPlaylistId = state.activePlaylistId;
+  if (!targetPlaylistId) return;
+  state.view = 'all';
+  state.selected.clear();
+  renderSidebar();
+  setViewTitle();
+  buildFilterOptions();
+  applyFilter();
+  setTimeout(function(){
+    const sel = document.getElementById('ab-playlist-select');
+    if (sel) sel.value = targetPlaylistId;
+    state.activePlaylistId = targetPlaylistId;
+  }, 50);
+  toast('请在列表中勾选歌曲，再点底部的"加入歌单"', 'ok');
+});
 
 $('#f-provider').addEventListener('change', applyFilter);
 $('#f-format').addEventListener('change', function(){ state.page = 1; applyFilter(); });
@@ -1766,15 +1749,41 @@ if ($('#page-size')) $('#page-size').addEventListener('change', function(){
 });
 if ($('#f-provider')) $('#f-provider').addEventListener('change', function(){ state.page = 1; });
 if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; });
-$('#search').addEventListener('input', debounce(applyFilter, 150));
+$('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
-$('#btn-new-scan').addEventListener('click', () => $('#scan-modal').classList.add('show'));
+// 扫描
+$('#btn-new-scan').addEventListener('click', function(){
+  $('#scan-modal').classList.add('show');
+  scanLoadDir(scanCurPath || '/');
+});
+$('#scan-up').addEventListener('click', function(){
+  if (scanCurPath === '/' || !scanCurPath) return;
+  const parts = scanCurPath.split('/').filter(Boolean);
+  parts.pop();
+  scanLoadDir('/' + parts.join('/'));
+});
+$('#scan-submit').addEventListener('click', async function(){
+  if (!scanCurPath || scanCurPath === '/') {
+    toast('请进入具体的音乐目录再选择', 'err');
+    return;
+  }
+  try {
+    await api('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ path: scanCurPath, mode: 'full', source: 'alist-1' })
+    });
+    toast('扫描任务已创建', 'ok');
+    $('#scan-modal').classList.remove('show');
+    await loadTasks();
+  } catch (e) {
+    toast('创建失败：' + e.message, 'err');
+  }
+});
 $('#scan-cancel').addEventListener('click', () => $('#scan-modal').classList.remove('show'));
-$('#scan-submit').addEventListener('click', triggerScan);
 $('#scan-modal').addEventListener('click', e => { if (e.target.id === 'scan-modal') e.target.classList.remove('show'); });
 $('#btn-refresh-tasks').addEventListener('click', loadTasks);
 $('#btn-refresh-settings').addEventListener('click', loadSettings);
-$('#btn-legacy-settings').addEventListener('click', () => window.open('/#/settings', '_blank'));
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape'){
@@ -1839,7 +1848,6 @@ async function createPlaylist(){
 /* ---------- 启动 ---------- */
 async function boot(){
   try {
-    // 先检查登录态
     try {
       const sess = await fetch('/api/web-auth/session', {credentials:'same-origin'});
       if (sess.status === 401){
@@ -1850,22 +1858,17 @@ async function boot(){
 
     await Promise.all([loadSongs(), loadPlaylists()]);
 
-    // 恢复上次的 UI 状态
     const saved = loadUIState();
     if (saved){
       if (saved.pageSize) state.pageSize = saved.pageSize;
       if (saved.filterArtist) state.filterArtist = saved.filterArtist;
       if (saved.filterAlbum) state.filterAlbum = saved.filterAlbum;
-
-      // 恢复歌单
       if (saved.view === 'playlist' && saved.activePlaylistId &&
           state.playlists.find(p => p.id === saved.activePlaylistId)){
         state.activePlaylistId = saved.activePlaylistId;
         state.view = 'playlist';
         await loadPlaylistTracks(saved.activePlaylistId);
       }
-
-      // 同步页大小下拉
       if (saved.pageSize && $('#page-size')) $('#page-size').value = String(saved.pageSize);
     }
 
@@ -1873,7 +1876,6 @@ async function boot(){
     buildFilterOptions();
     applyFilter();
 
-    // 恢复主视图（要放在 loadPlaylistTracks 之后）
     if (saved && saved.mainView && saved.mainView !== 'songs'){
       switchMainView(saved.mainView);
     } else {
