@@ -106,8 +106,10 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtistImage(w, r)
 	case "scrobble":
 		h.scrobble(w, r)
-	case "search2", "search3":
-		h.search(w, r, p)
+	case "search2":
+		h.search(w, r, "searchResult2")
+	case "search3":
+		h.search(w, r, "searchResult3")
 	case "getStarred", "getStarred2":
 		h.writeOK(w, r, map[string]any{p: map[string]any{
 			"artist": []any{}, "album": []any{}, "song": []any{},
@@ -397,7 +399,10 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request) {
 }
 
 // ==================== 专辑列表 ====================
-// 老版 getAlbumList：album 的字段是 title，不是 name
+
+// 老版 getAlbumList
+// 响应 key: albumList
+// album 字段: title（不是 name）
 func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request) {
 	songs, _ := h.DB.ListSongs()
 
@@ -452,13 +457,15 @@ func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request) {
 	}
 	out = out[offset:end]
 
-	log.Printf("[subsonic] getAlbumList returned %d (total=%d)", len(out), len(albums))
+	log.Printf("[subsonic] getAlbumList returned %d", len(out))
 	h.writeOK(w, r, map[string]any{
 		"albumList": map[string]any{"album": out},
 	})
 }
 
-// 新版 getAlbumList2：album 的字段是 name
+// 新版 getAlbumList2
+// 响应 key: albumList2  ← 关键修复
+// album 字段: name（不是 title）
 func (h *Handler) getAlbumList2(w http.ResponseWriter, r *http.Request) {
 	songs, _ := h.DB.ListSongs()
 
@@ -503,7 +510,7 @@ func (h *Handler) getAlbumList2(w http.ResponseWriter, r *http.Request) {
 	}
 	out = out[offset:end]
 
-	log.Printf("[subsonic] getAlbumList2 returned %d (total=%d)", len(out), len(albums))
+	log.Printf("[subsonic] getAlbumList2 returned %d", len(out))
 	h.writeOK(w, r, map[string]any{
 		"albumList2": map[string]any{"album": out},
 	})
@@ -645,6 +652,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 	typ := r.URL.Query().Get("type")
 	log.Printf("[getCoverArt] id=%s type=%s", id, typ)
 
+	// 艺术家头像
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
@@ -658,6 +666,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 专辑封面
 	if typ == "album" || strings.HasPrefix(id, "al-") {
 		songs, _ := h.DB.ListSongs()
 		for _, s := range songs {
@@ -671,6 +680,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 歌单封面
 	if typ == "playlist" {
 		songs, _ := h.DB.GetPlaylistSongs(id)
 		for _, s := range songs {
@@ -699,10 +709,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
-	// 路径容错：DB 里存的可能是 /app/data/covers/xxx.jpg
-	// 如果文件不存在，试下 DataDir/covers/xxx.jpg
 	if _, err := os.Stat(path); err != nil {
-		// 只取文件名，拼到 covers 目录下
 		base := path
 		if idx := strings.LastIndex(base, "/"); idx >= 0 {
 			base = base[idx+1:]
@@ -933,7 +940,8 @@ func (h *Handler) scrobble(w http.ResponseWriter, r *http.Request) {
 
 // ==================== 搜索 ====================
 
-func (h *Handler) search(w http.ResponseWriter, r *http.Request, p string) {
+// key 传 "searchResult2" 或 "searchResult3"
+func (h *Handler) search(w http.ResponseWriter, r *http.Request, key string) {
 	q := strings.ToLower(r.URL.Query().Get("query"))
 	if q == "" {
 		q = strings.ToLower(r.URL.Query().Get("any"))
@@ -966,10 +974,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, p string) {
 		}
 	}
 
-	key := "searchResult3"
-	if p == "search2" {
-		key = "searchResult2"
-	}
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
 			"artist": matchedArtists,
@@ -1014,7 +1018,6 @@ func songToMap(s *db.Song) map[string]any {
 	aID := albumID(s.Album, s.Artist)
 	arID := artistID(s.Artist)
 
-	// coverArt：有封面才带
 	coverArt := s.ID
 	if s.CoverPath == "" {
 		coverArt = aID
