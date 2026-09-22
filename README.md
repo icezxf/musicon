@@ -13,5 +13,5 @@ AList 音乐库 + Subsonic 协议服务，单二进制部署。
 | AListURL | - | AList 地址 |
 | AListToken | - | AList token |
 | LXServerURL | http://127.0.0.1:9527 | LX 服务 |
-| WEB_USER | fire | 登录用户名 |
-| WEB_PASS | boc81838 | 登录密码 |
+| WEB_USER | 登录用户名 |
+| WEB_PASS |  | 登录密码 |
