@@ -171,6 +171,8 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
+// 兼容前端带尾斜杠的请求（如 /api/songs/）
+	p = strings.TrimSuffix(p, "/")
 	switch {
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
