@@ -941,11 +941,25 @@ func (h *Handler) scrobble(w http.ResponseWriter, r *http.Request) {
 // ==================== 搜索 ====================
 
 // key 传 "searchResult2" 或 "searchResult3"
+// key 传 "searchResult2" 或 "searchResult3"
 func (h *Handler) search(w http.ResponseWriter, r *http.Request, key string) {
-	q := strings.ToLower(r.URL.Query().Get("query"))
+	q := r.URL.Query().Get("query")
 	if q == "" {
-		q = strings.ToLower(r.URL.Query().Get("any"))
+		q = r.URL.Query().Get("any")
 	}
+	ql := strings.ToLower(q)
+
+	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
+	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
+	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
+	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
+
+	log.Printf("[search] key=%s query=%q songCount=%d songOffset=%d artistCount=%d albumCount=%d",
+		key, q, songCount, songOffset, artistCount, albumCount)
+
+	// 空查询 / 通配符 → 返回全部
+	all := ql == "" || ql == "*"
+
 	songs, _ := h.DB.ListSongs()
 
 	var matchedSongs []map[string]any
@@ -956,9 +970,11 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, key string) {
 
 	for i := range songs {
 		s := &songs[i]
-		hay := strings.ToLower(s.Title + " " + s.Artist + " " + s.Album)
-		if q != "" && !strings.Contains(hay, q) {
-			continue
+		if !all {
+			hay := strings.ToLower(s.Title + " " + s.Artist + " " + s.Album)
+			if !strings.Contains(hay, ql) {
+				continue
+			}
 		}
 		matchedSongs = append(matchedSongs, songToMap(s))
 		if !artistSet[s.Artist] && s.Artist != "" {
@@ -973,6 +989,25 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, key string) {
 			matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
 		}
 	}
+
+	// 应用 songOffset / songCount 分页
+	if songOffset > 0 && songOffset < len(matchedSongs) {
+		matchedSongs = matchedSongs[songOffset:]
+	} else if songOffset >= len(matchedSongs) {
+		matchedSongs = nil
+	}
+	if songCount > 0 && len(matchedSongs) > songCount {
+		matchedSongs = matchedSongs[:songCount]
+	}
+	if artistCount > 0 && len(matchedArtists) > artistCount {
+		matchedArtists = matchedArtists[:artistCount]
+	}
+	if albumCount > 0 && len(matchedAlbums) > albumCount {
+		matchedAlbums = matchedAlbums[:albumCount]
+	}
+
+	log.Printf("[search] 返回 %d song / %d artist / %d album",
+		len(matchedSongs), len(matchedArtists), len(matchedAlbums))
 
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
