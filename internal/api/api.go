@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 
 	"github.com/icezxf/musicon-go/internal/alist"
@@ -32,24 +31,16 @@ func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s
 	return &Handler{DB: database, AList: a, LX: l, Cfg: c, Settings: s, Scan: sc}
 }
 
-// ---------------------------------------------------------------
-// 路由注册（Go 1.22+ 语法，避免 /api/songs 被 301 重定向到 /api/songs/）
-// ---------------------------------------------------------------
 func (h *Handler) Mount(mux *http.ServeMux) {
-	// 公开接口（不需要 Web 会话）
+	// 公开接口
 	mux.HandleFunc("/api/web-auth/login", h.login)
 	mux.HandleFunc("/api/web-auth/logout", h.logout)
 	mux.HandleFunc("/api/web-auth/session", h.session)
 	mux.HandleFunc("/api/artist/image", h.artistImage)
-
-	// 封面缩略图 —— 浏览器 <img> 会直接请求，不能带 cookie，所以公开
 	mux.HandleFunc("/api/covers/thumb/", h.coverThumb)
-
-	// 前端播放按钮走这个 —— 302 到 AList 直链
-	// 用 Go 1.22 的 {id} 通配，避免 "/api/songs/" 前缀把 "/api/songs" 也吞掉
 	mux.HandleFunc("GET /api/songs/{id}/stream", h.songStream)
 
-	// 其他接口需要 Web 会话
+	// 需要会话
 	mux.HandleFunc("/api/", h.authWrap(h.handle))
 }
 
@@ -63,36 +54,9 @@ func (h *Handler) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// ---------------------------------------------------------------
-// 公开接口
-// ---------------------------------------------------------------
+// ---------- 公开 ----------
 
-// GET /api/covers/thumb/{size}/{filename}
-func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/covers/thumb/")
-	parts := strings.SplitN(rest, "/", 2)
-	if len(parts) < 2 {
-		http.Error(w, "bad path", 400)
-		return
-	}
-	filename := parts[1]
-
-	// 安全校验：只允许字母数字和 .-_
-	for _, c := range filename {
-		if !(c == '.' || c == '-' || c == '_' ||
-			(c >= '0' && c <= '9') ||
-			(c >= 'a' && c <= 'z') ||
-			(c >= 'A' && c <= 'Z')) {
-			http.Error(w, "bad filename", 400)
-			return
-		}
-	}
-
-	p := filepath.Join(h.Cfg.DataDir, "covers", filename)
-	http.ServeFile(w, r, p)
-}
-
-// GET /api/songs/{id}/stream → 302 到 AList 直链
+// GET /api/songs/{id}/stream → 302
 func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -104,17 +68,15 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "Song not found"})
 		return
 	}
-	url, err := h.AList.GetRawURL(s.Path)
+	u, err := h.AList.GetRawURL(s.Path)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, u, http.StatusFound)
 }
 
-// ---------------------------------------------------------------
-// Web 认证
-// ---------------------------------------------------------------
+// ---------- 认证 ----------
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -165,20 +127,28 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"username": user})
 }
 
-// ---------------------------------------------------------------
-// 主路由分发（所有需要 Web 会话的接口）
-// ---------------------------------------------------------------
+// ---------- 路由 ----------
 
 func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
-	p := r.URL.Path
-// 兼容前端带尾斜杠的请求（如 /api/songs/）
-	p = strings.TrimSuffix(p, "/")
+	p := strings.TrimSuffix(r.URL.Path, "/")
+	if p == "" {
+		p = "/"
+	}
+
 	switch {
+	// 歌曲
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
 	case p == "/api/songs/top" && r.Method == "GET":
 		h.listSongs(w, r)
+	case p == "/api/songs" && r.Method == "DELETE":
+		h.deleteSongs(w, r)
+	case strings.HasPrefix(p, "/api/songs/") && r.Method == "GET":
+		h.getSong(w, r)
+	case strings.HasPrefix(p, "/api/songs/") && r.Method == "PUT":
+		h.updateSong(w, r)
 
+	// 歌单
 	case p == "/api/playlists" && r.Method == "GET":
 		h.listPlaylists(w, r)
 	case p == "/api/playlists" && r.Method == "POST":
@@ -190,6 +160,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/playlists/") && r.Method == "DELETE":
 		h.deletePlaylist(w, r)
 
+	// Subsonic 用户
 	case p == "/api/subsonic/users" && r.Method == "GET":
 		h.listSubUsers(w, r)
 	case p == "/api/subsonic/users" && r.Method == "POST":
@@ -199,14 +170,23 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/subsonic/users/") && r.Method == "DELETE":
 		h.deleteSubUser(w, r)
 
+	// 艺术家
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
 
+	// 元数据搜索/歌词
+	case p == "/api/music/metadata-search" && r.Method == "GET":
+		h.metadataSearch(w, r)
+	case p == "/api/music/metadata-lyric" && r.Method == "GET":
+		h.metadataLyric(w, r)
+
+	// 任务
 	case p == "/api/tasks" && r.Method == "GET":
 		h.listTasks(w, r)
 	case p == "/api/scan" && r.Method == "POST":
 		h.startScan(w, r)
 
+	// 设置
 	case p == "/api/settings" && r.Method == "GET":
 		h.getSettings(w, r)
 	case p == "/api/settings" && r.Method == "POST":
@@ -214,11 +194,13 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/settings/storage/test" && r.Method == "POST":
 		h.testStorage(w, r)
 
+	// 统计
 	case p == "/api/stats" && r.Method == "GET":
 		h.stats(w, r)
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
 
+	// LX
 	case p == "/api/lx/status" && r.Method == "GET":
 		writeJSON(w, 200, map[string]any{"running": true, "url": h.Settings.GetLXURL()})
 
@@ -227,9 +209,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ---------------------------------------------------------------
-// 歌曲
-// ---------------------------------------------------------------
+// ---------- 歌曲 ----------
 
 func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
 	songs, err := h.DB.ListSongs()
@@ -240,9 +220,52 @@ func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"songs": songs})
 }
 
-// ---------------------------------------------------------------
-// 歌单
-// ---------------------------------------------------------------
+func (h *Handler) getSong(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/songs/")
+	s, err := h.DB.GetSong(id)
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"song": s})
+}
+
+func (h *Handler) updateSong(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/songs/")
+	var body map[string]any
+	json.NewDecoder(r.Body).Decode(&body)
+	fields := map[string]string{}
+	for _, k := range []string{"title", "artist", "album", "album_artist", "genre", "lyrics", "cover_art"} {
+		if v, ok := body[k]; ok {
+			if s, ok := v.(string); ok {
+				fields[k] = s
+			}
+		}
+	}
+	if err := h.DB.UpdateSong(id, fields); err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "已更新"})
+}
+
+func (h *Handler) deleteSongs(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SongIDs []string `json:"song_ids"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if len(body.SongIDs) == 0 {
+		writeJSON(w, 400, map[string]any{"detail": "song_ids required"})
+		return
+	}
+	if err := h.DB.DeleteSongs(body.SongIDs); err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": fmt.Sprintf("已删除 %d 首", len(body.SongIDs))})
+}
+
+// ---------- 歌单 ----------
 
 func (h *Handler) listPlaylists(w http.ResponseWriter, r *http.Request) {
 	pls, _ := h.DB.ListPlaylists()
@@ -307,9 +330,7 @@ func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "歌单已删除"})
 }
 
-// ---------------------------------------------------------------
-// Subsonic 账号
-// ---------------------------------------------------------------
+// ---------- Subsonic 用户 ----------
 
 func (h *Handler) listSubUsers(w http.ResponseWriter, r *http.Request) {
 	rows, _ := h.DB.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
@@ -377,9 +398,7 @@ func (h *Handler) deleteSubUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "已删除"})
 }
 
-// ---------------------------------------------------------------
-// 艺术家
-// ---------------------------------------------------------------
+// ---------- 艺术家 ----------
 
 func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
@@ -409,9 +428,7 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-// ---------------------------------------------------------------
-// 任务
-// ---------------------------------------------------------------
+// ---------- 任务 ----------
 
 func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 	ts, _ := h.DB.ListScanTasks(50)
@@ -439,9 +456,7 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"message": "扫描任务已创建", "task_id": taskID})
 }
 
-// ---------------------------------------------------------------
-// 设置
-// ---------------------------------------------------------------
+// ---------- 设置 ----------
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
 	all := h.Settings.GetAll()
@@ -478,16 +493,12 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 			h.Settings.Set(k, string(b))
 		}
 	}
-
 	for k, v := range body {
 		save(k, v)
 	}
-
-	// 改了存储源 → 强制重新登录 AList
 	if _, ok := body["storage_providers"]; ok {
 		h.Settings.Set("alist_token", "")
 	}
-
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -507,9 +518,7 @@ func (h *Handler) testStorage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------------------------------------------------------------
-// 统计
-// ---------------------------------------------------------------
+// ---------- 统计 ----------
 
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"total_songs": h.DB.CountSongs()})
@@ -520,9 +529,7 @@ func (h *Handler) recentPlays(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"plays": rows})
 }
 
-// ---------------------------------------------------------------
-// 工具
-// ---------------------------------------------------------------
+// ---------- 工具 ----------
 
 func writeJSON(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
