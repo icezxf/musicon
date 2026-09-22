@@ -166,9 +166,9 @@ func flacDuration(data []byte) int {
 	if stream.Info.SampleRate == 0 {
 		return 0
 	}
-	return int(stream.Info.TotalSamples / int64(stream.Info.SampleRate))
+	// mewkiz/flac 用 NSamples（uint64），不是 TotalSamples
+	return int(stream.Info.NSamples / uint64(stream.Info.SampleRate))
 }
-
 // ---------- 文件名 fallback ----------
 
 var (
