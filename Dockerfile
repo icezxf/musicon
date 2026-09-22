@@ -1,8 +1,7 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /src
-COPY go.mod ./
-RUN go mod tidy
 COPY . .
+RUN go mod tidy
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /musicon-go .
 
 FROM alpine:3.20
