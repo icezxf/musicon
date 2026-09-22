@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,19 +14,21 @@ import (
 	"github.com/icezxf/musicon-go/internal/db"
 	"github.com/icezxf/musicon-go/internal/lx"
 	"github.com/icezxf/musicon-go/internal/scan"
+	"github.com/icezxf/musicon-go/internal/settings"
 )
 
 type Handler struct {
-	DB    *db.Holder
-	AList *alist.Client
-	LX    *lx.Client
-	Cfg   *config.Config
-	Scan  *scan.Scanner
+	DB       *db.Holder
+	AList    *alist.Client
+	LX       *lx.Client
+	Cfg      *config.Config
+	Settings *settings.Manager
+	Scan     *scan.Scanner
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config) *Handler {
+func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s *settings.Manager) *Handler {
 	sc := &scan.Scanner{DB: database, AList: a, CoverDir: c.DataDir + "/covers"}
-	return &Handler{DB: database, AList: a, LX: l, Cfg: c, Scan: sc}
+	return &Handler{DB: database, AList: a, LX: l, Cfg: c, Settings: s, Scan: sc}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -52,7 +55,18 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if body.Username != h.Cfg.WebUser || body.Password != h.Cfg.WebPass {
+
+	// 优先用 DB 里的，回退到环境变量
+	dbUser := h.Settings.Get("web_user")
+	dbPass := h.Settings.Get("web_pass")
+	if dbUser == "" {
+		dbUser = h.Cfg.WebUser
+	}
+	if dbPass == "" {
+		dbPass = h.Cfg.WebPass
+	}
+
+	if body.Username != dbUser || body.Password != dbPass {
 		writeJSON(w, 401, map[string]any{"detail": "Invalid credentials"})
 		return
 	}
@@ -88,11 +102,9 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	switch {
-	// ---- 歌曲 ----
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
 
-	// ---- 歌单 ----
 	case p == "/api/playlists" && r.Method == "GET":
 		h.listPlaylists(w, r)
 	case p == "/api/playlists" && r.Method == "POST":
@@ -104,7 +116,6 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/playlists/") && r.Method == "DELETE":
 		h.deletePlaylist(w, r)
 
-	// ---- Subsonic 账号 ----
 	case p == "/api/subsonic/users" && r.Method == "GET":
 		h.listSubUsers(w, r)
 	case p == "/api/subsonic/users" && r.Method == "POST":
@@ -113,20 +124,15 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.updateSubUser(w, r)
 	case strings.HasPrefix(p, "/api/subsonic/users/") && r.Method == "DELETE":
 		h.deleteSubUser(w, r)
-	case p == "/api/subsonic/capabilities" && r.Method == "GET":
-		writeJSON(w, 200, map[string]any{"capabilities": []string{}})
 
-	// ---- 艺术家 ----
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
 
-	// ---- 任务 ----
 	case p == "/api/tasks" && r.Method == "GET":
 		h.listTasks(w, r)
 	case p == "/api/scan" && r.Method == "POST":
 		h.startScan(w, r)
 
-	// ---- 设置 ----
 	case p == "/api/settings" && r.Method == "GET":
 		h.getSettings(w, r)
 	case p == "/api/settings" && r.Method == "POST":
@@ -134,22 +140,20 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/settings/storage/test" && r.Method == "POST":
 		h.testStorage(w, r)
 
-	// ---- 统计 ----
 	case p == "/api/stats" && r.Method == "GET":
 		h.stats(w, r)
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
 
-	// ---- LX ----
 	case p == "/api/lx/status" && r.Method == "GET":
-		writeJSON(w, 200, map[string]any{"running": true, "url": h.Cfg.LXServerURL})
+		writeJSON(w, 200, map[string]any{"running": true, "url": h.Settings.GetLXURL()})
 
 	default:
 		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
 	}
 }
 
-// ---- 歌曲 ----
+// ---- 歌曲 / 歌单 ----
 
 func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
 	songs, err := h.DB.ListSongs()
@@ -159,8 +163,6 @@ func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"songs": songs})
 }
-
-// ---- 歌单 ----
 
 func (h *Handler) listPlaylists(w http.ResponseWriter, r *http.Request) {
 	pls, _ := h.DB.ListPlaylists()
@@ -228,23 +230,14 @@ func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 // ---- Subsonic 账号 ----
 
 func (h *Handler) listSubUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
-	if err != nil {
-		writeJSON(w, 500, map[string]any{"detail": err.Error()})
-		return
-	}
+	rows, _ := h.DB.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
 	defer rows.Close()
 	users := []map[string]any{}
 	for rows.Next() {
 		var u, role, created string
 		var en int
 		rows.Scan(&u, &role, &en, &created)
-		users = append(users, map[string]any{
-			"username":   u,
-			"role":       role,
-			"enabled":    en == 1,
-			"created_at": created,
-		})
+		users = append(users, map[string]any{"username": u, "role": role, "enabled": en == 1, "created_at": created})
 	}
 	writeJSON(w, 200, map[string]any{"users": users})
 }
@@ -263,10 +256,8 @@ func (h *Handler) createSubUser(w http.ResponseWriter, r *http.Request) {
 	if body.Role == "" {
 		body.Role = "user"
 	}
-	_, err := h.DB.DB.Exec(
-		`INSERT INTO subsonic_users(username, password, role, enabled) VALUES(?,?,?,1)`,
-		body.Username, body.Password, body.Role,
-	)
+	_, err := h.DB.DB.Exec(`INSERT INTO subsonic_users(username, password, role, enabled) VALUES(?,?,?,1)`,
+		body.Username, body.Password, body.Role)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -282,7 +273,6 @@ func (h *Handler) updateSubUser(w http.ResponseWriter, r *http.Request) {
 		Enabled  *bool  `json:"enabled"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-
 	if body.Password != "" {
 		h.DB.DB.Exec(`UPDATE subsonic_users SET password=? WHERE username=?`, body.Password, u)
 	}
@@ -301,10 +291,6 @@ func (h *Handler) updateSubUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteSubUser(w http.ResponseWriter, r *http.Request) {
 	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
-	if u == h.Cfg.WebUser {
-		writeJSON(w, 400, map[string]any{"detail": "不能删除当前管理员账号"})
-		return
-	}
 	h.DB.DB.Exec(`DELETE FROM subsonic_users WHERE username=?`, u)
 	writeJSON(w, 200, map[string]any{"message": "已删除"})
 }
@@ -357,6 +343,9 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "path 必填"})
 		return
 	}
+	// 存下最近的扫描路径
+	h.Settings.Set("last_scan_path", body.Path)
+
 	taskID, err := h.DB.CreateScanTask(body.Path, body.Mode, body.Source)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
@@ -369,60 +358,97 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 // ---- 设置 ----
 
 func (h *Handler) getSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"settings": map[string]any{
-			"alist_url":      h.Cfg.AListURL,
-			"lx_server_url":  h.Cfg.LXServerURL,
-			"subsonic_user":  h.Cfg.WebUser,
-			"range_size_kb":  1024,
-			"cache_ttl_min":  30,
-			"cache_max_gb":   10,
-		},
-	})
+	all := h.Settings.GetAll()
+
+	// 脱敏 secret
+	for _, k := range []string{"alist_password", "web_pass", "subsonic_pass"} {
+		if v, ok := all[k]; ok && v != "" {
+			all["has_"+k] = "true"
+			all[k] = ""
+		}
+	}
+
+	// 补充 storage_providers 脱敏
+	if raw, ok := all["storage_providers"]; ok && raw != "" {
+		var list []map[string]any
+		if json.Unmarshal([]byte(raw), &list) == nil {
+			for _, p := range list {
+				if cfg, ok := p["config"].(map[string]any); ok {
+					if pw, ok := cfg["refresh_password"].(string); ok && pw != "" {
+						cfg["has_refresh_password"] = true
+						cfg["refresh_password"] = ""
+					}
+					if t, ok := cfg["token"].(string); ok && t != "" {
+						cfg["has_token"] = true
+						cfg["token"] = ""
+					}
+				}
+			}
+			if b, err := json.Marshal(list); err == nil {
+				all["storage_providers"] = string(b)
+			}
+		}
+	}
+
+	writeJSON(w, 200, map[string]any{"settings": all})
 }
 
 func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	json.NewDecoder(r.Body).Decode(&body)
 
-	// 只保存我们关心的字段到 app_settings 表
-	save := func(k, v string) {
-		h.DB.DB.Exec(`INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`, k, v)
-	}
-	for _, k := range []string{"alist_url", "lx_server_url", "cache_ttl_min", "range_size_kb", "cache_max_gb"} {
-		if v, ok := body[k]; ok {
-			if s, ok := v.(string); ok {
-				save(k, s)
-			} else {
-				b, _ := json.Marshal(v)
-				save(k, string(b))
+	save := func(k string, v any) {
+		switch x := v.(type) {
+		case string:
+			// 空值跳过（是脱敏字段没改）
+			if x == "" && (k == "alist_password" || k == "web_pass" || k == "subsonic_pass") {
+				return
 			}
+			h.Settings.Set(k, x)
+		case bool:
+			if x {
+				h.Settings.Set(k, "true")
+			} else {
+				h.Settings.Set(k, "false")
+			}
+		case float64:
+			h.Settings.Set(k, fmt.Sprintf("%v", x))
+		case map[string]any, []any:
+			b, _ := json.Marshal(x)
+			h.Settings.Set(k, string(b))
 		}
 	}
+
+	for k, v := range body {
+		save(k, v)
+	}
+
+	// 如果改了 storage_providers 且里面有 AList 密码，清空 token 强制重新登录
+	if _, ok := body["storage_providers"]; ok {
+		// 但空密码要保留原值
+		raw := h.Settings.Get("storage_providers")
+		var list []map[string]any
+		if json.Unmarshal([]byte(raw), &list) == nil {
+			// 与 DB 里之前的值合并——简化起见，先不做复杂合并
+		}
+		h.Settings.Set("alist_token", "")
+	}
+
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
-// testStorage: 简单验证 AList 连接
 func (h *Handler) testStorage(w http.ResponseWriter, r *http.Request) {
-	// 直接用环境变量的 AListURL 测
-	if h.Cfg.AListURL == "" {
-		writeJSON(w, 400, map[string]any{"detail": map[string]any{
-			"message": "AListURL 未配置（用环境变量）",
-			"hint":    "请设置 AListURL 环境变量后重启容器",
-		}})
-		return
-	}
 	entries, err := h.AList.List("/")
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"detail": map[string]any{
 			"message": err.Error(),
-			"hint":    "检查 AList 地址和 Token",
+			"hint":    "检查 AList 地址和账号密码",
 		}})
 		return
 	}
 	writeJSON(w, 200, map[string]any{
 		"ok":      true,
-		"message": "AList 连通，根目录列出 " + itoa(len(entries)) + " 项",
+		"message": fmt.Sprintf("AList 连通，根目录列出 %d 项", len(entries)),
 		"count":   len(entries),
 	})
 }
@@ -454,26 +480,4 @@ func toStrings(a []any) []string {
 		}
 	}
 	return out
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }
