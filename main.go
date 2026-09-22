@@ -41,7 +41,7 @@ func main() {
 	holder := &db.Holder{DB: database}
 	settingsMgr := settings.New(database)
 	alistClient := alist.New(settingsMgr)
-	lxClient := lx.New(settingsMgr.GetLXURL())
+	lxClient := lx.New(settingsMgr)
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(cfg.StaticDir))))
