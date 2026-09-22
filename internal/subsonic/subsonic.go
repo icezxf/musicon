@@ -394,9 +394,9 @@ h.writeOK(w, r, map[string]any{})
 }
 
 func songToMap(s *db.Song) map[string]any {
-return map[string]any{
-"id": s.ID, "title": s.Title, "artist": s.Artist,
-"album": s.Album, "duration": s.Dur, "isDir": false,
-"suffix": strings.ToLower(s.Fmt),
-}
+	return map[string]any{
+		"id": s.ID, "title": s.Title, "artist": s.Artist,
+		"album": s.Album, "duration": s.Dur, "isDir": false,
+		"suffix": strings.ToLower(s.Fmt),
+	}
 }
