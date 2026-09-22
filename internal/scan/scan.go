@@ -87,17 +87,47 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string) error {
 		if err != nil || info == nil {
 			info = &meta.Info{Title: filename}
 		}
-		// 有封面就停
 		if len(info.CoverData) > 0 {
 			log.Printf("[probe] %s ✓ 读到封面 (%d 字节, 共读 %dMB)",
 				filename, len(info.CoverData), size/1024/1024)
 			break
 		}
-		// 最后一次还没读到封面，就用这次的
 		if i == len(sizes)-1 {
 			log.Printf("[probe] %s ✗ 8MB 内无封面", filename)
 		}
 	}
+
+	title := info.Title
+	if title == "" {
+		title = strings.TrimSuffix(filename, filepath.Ext(filename))
+	}
+	artist := info.Artist
+	album := info.Album
+	aa := info.AlbumArtist
+	if aa == "" {
+		aa = artist
+	}
+
+	coverPath := ""
+	if len(info.CoverData) > 0 {
+		coverPath = s.saveCover(info.CoverData)
+	}
+
+	return s.DB.UpsertSong(db.Song{
+		ID:          stableID(fullPath),
+		Title:       title,
+		Artist:      artist,
+		Album:       album,
+		AlbumArtist: aa,
+		Genre:       info.Genre,
+		Fmt:         fmtName,
+		Dur:         info.Duration,
+		Path:        fullPath,
+		ProviderID:  providerID,
+		CoverPath:   coverPath,
+		Lyrics:      info.Lyrics,
+	})
+}
 
 func (s *Scanner) saveCover(data []byte) string {
 	if s.CoverDir == "" {
