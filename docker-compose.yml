@@ -1,0 +1,17 @@
+services:
+  musicon-go:
+    build: .
+    image: ghcr.io/icezxf/musicon-go:latest
+    container_name: musicon-go
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      LISTEN: "0.0.0.0:8000"
+      DB_PATH: "/app/data/musicon.db"
+      WEB_USER: "fire"
+      WEB_PASS: "boc81838"
+      AListURL: "http://172.17.0.1:5244"
+      LXServerURL: "http://172.17.0.1:9527"
+    volumes:
+      - ./data:/app/data
