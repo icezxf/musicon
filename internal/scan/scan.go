@@ -69,51 +69,35 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string) error {
 	if err != nil {
 		return err
 	}
-	data, err := s.AList.ReadRange(rawURL, 0, 1024*1024-1)
-	if err != nil {
-		return err
-	}
 
-	// 传文件名用于 fallback
 	filename := path.Base(fullPath)
-	info, err := meta.Parse(data, filename)
-	if err != nil || info == nil {
-		info = &meta.Info{Title: filename}
-	}
 
-	title := info.Title
-	if title == "" {
-		title = strings.TrimSuffix(filename, filepath.Ext(filename))
-	}
+	// 渐进式读取：1MB → 2MB → 4MB → 8MB
+	// 一旦解析出封面就停，避免对没封面的文件浪费带宽
+	var data []byte
+	var info *meta.Info
+	sizes := []int64{1 * 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}
 
-	artist := info.Artist
-	album := info.Album
-	aa := info.AlbumArtist
-	if aa == "" {
-		aa = artist
+	for i, size := range sizes {
+		data, err = s.AList.ReadRange(rawURL, 0, size-1)
+		if err != nil {
+			return err
+		}
+		info, err = meta.Parse(data, filename)
+		if err != nil || info == nil {
+			info = &meta.Info{Title: filename}
+		}
+		// 有封面就停
+		if len(info.CoverData) > 0 {
+			log.Printf("[probe] %s ✓ 读到封面 (%d 字节, 共读 %dMB)",
+				filename, len(info.CoverData), size/1024/1024)
+			break
+		}
+		// 最后一次还没读到封面，就用这次的
+		if i == len(sizes)-1 {
+			log.Printf("[probe] %s ✗ 8MB 内无封面", filename)
+		}
 	}
-
-	// 封面写盘
-	coverPath := ""
-	if len(info.CoverData) > 0 {
-		coverPath = s.saveCover(info.CoverData)
-	}
-
-	return s.DB.UpsertSong(db.Song{
-		ID:          stableID(fullPath),
-		Title:       title,
-		Artist:      artist,
-		Album:       album,
-		AlbumArtist: aa,
-		Genre:       info.Genre,
-		Fmt:         fmtName,
-		Dur:         info.Duration,
-		Path:        fullPath,
-		ProviderID:  providerID,
-		CoverPath:   coverPath,
-		Lyrics:      info.Lyrics,
-	})
-}
 
 func (s *Scanner) saveCover(data []byte) string {
 	if s.CoverDir == "" {
