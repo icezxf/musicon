@@ -61,8 +61,6 @@ var rawURLCache = struct {
 	m  map[string]cachedURL
 }{m: map[string]cachedURL{}}
 
-// getCachedRawURL 缓存每首歌的网盘直链 60 秒，减少 AList 往返。
-// 移动云签名 900 秒有效，60 秒缓存绝对安全。
 func (h *Handler) getCachedRawURL(songID, path string) (string, error) {
 	rawURLCache.mu.RLock()
 	c, ok := rawURLCache.m[songID]
@@ -811,14 +809,29 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HEAD 本地返回元数据头（移动云 CDN 拒绝 HEAD）
+	// HEAD 请求：本地返回元数据头
+	// 关键：必须正确处理 Range 头，回 206 + Content-Range
+	// 否则客户端以为不支持 Range，seek 时会从头下载
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
 		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Cache-Control", "private, max-age=60")
+
+		if rng := r.Header.Get("Range"); rng != "" && s.FileSize > 0 {
+			start, end, ok := parseRangeHeader(rng, s.FileSize)
+			if ok {
+				w.Header().Set("Content-Range",
+					fmt.Sprintf("bytes %d-%d/%d", start, end, s.FileSize))
+				w.Header().Set("Content-Length",
+					strconv.FormatInt(end-start+1, 10))
+				w.WriteHeader(http.StatusPartialContent) // 206
+				return
+			}
+		}
+
 		if s.FileSize > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
 		}
-		w.Header().Set("Cache-Control", "private, max-age=60")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -841,6 +854,59 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
 	}
 	http.Redirect(w, r, rawURL, http.StatusFound)
+}
+
+// parseRangeHeader 解析 HTTP Range 头。仅支持单范围。
+// "bytes=5000000-"     → 5000000 到末尾
+// "bytes=0-100000"     → 0 到 100000
+// "bytes=-1000"        → 最后 1000 字节
+// 返回 [start, end] 均为闭区间。
+func parseRangeHeader(h string, size int64) (int64, int64, bool) {
+	if !strings.HasPrefix(h, "bytes=") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(h, "bytes=")
+	if i := strings.IndexByte(spec, ','); i >= 0 {
+		spec = spec[:i] // 只处理第一个范围
+	}
+	dash := strings.IndexByte(spec, '-')
+	if dash < 0 {
+		return 0, 0, false
+	}
+	startStr := strings.TrimSpace(spec[:dash])
+	endStr := strings.TrimSpace(spec[dash+1:])
+
+	var start, end int64
+	if startStr == "" {
+		// "-suffix"：最后 N 字节
+		n, err := strconv.ParseInt(endStr, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		if n > size {
+			n = size
+		}
+		start = size - n
+		end = size - 1
+	} else {
+		var err error
+		start, err = strconv.ParseInt(startStr, 10, 64)
+		if err != nil || start < 0 || start >= size {
+			return 0, 0, false
+		}
+		if endStr == "" {
+			end = size - 1
+		} else {
+			end, err = strconv.ParseInt(endStr, 10, 64)
+			if err != nil || end < start {
+				return 0, 0, false
+			}
+			if end >= size {
+				end = size - 1
+			}
+		}
+	}
+	return start, end, true
 }
 
 // 从 Fmt 推导 Content-Type，和 songToMap 里的映射保持一致
