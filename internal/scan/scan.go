@@ -7,7 +7,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"sync"
 
 	"github.com/icezxf/musicon-go/internal/alist"
 	"github.com/icezxf/musicon-go/internal/db"
@@ -23,9 +25,20 @@ type Scanner struct {
 	DB       *db.Holder
 	AList    *alist.Client
 	CoverDir string
+	WG       *sync.WaitGroup
 }
 
 func (s *Scanner) Run(taskID, rootPath, providerID string) {
+	if s.WG != nil {
+		s.WG.Add(1)
+		defer s.WG.Done()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scan] panic: %v\n%s", r, debug.Stack())
+			s.DB.SetTaskStatus(taskID, "failed")
+		}
+	}()
 	log.Printf("[scan] start %s %s", taskID, rootPath)
 	total := 0
 	processed := 0
@@ -72,7 +85,6 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 
 	filename := path.Base(fullPath)
 
-	// 渐进式读取：1MB → 2MB → 4MB → 8MB
 	var data []byte
 	var info *meta.Info
 	sizes := []int64{1 * 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}
@@ -109,7 +121,7 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 
 	coverPath := ""
 	if len(info.CoverData) > 0 {
-		coverPath = s.saveCover(info.CoverData)
+		coverPath = s.saveCover(info.CoverData, info.CoverMime)
 	}
 
 	return s.DB.UpsertSong(db.Song{
@@ -138,13 +150,23 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 	})
 }
 
-func (s *Scanner) saveCover(data []byte) string {
+// 按 MIME 决定扩展名
+func (s *Scanner) saveCover(data []byte, mime string) string {
 	if s.CoverDir == "" {
 		return ""
 	}
 	os.MkdirAll(s.CoverDir, 0755)
 	h := sha1.Sum(data)
-	name := hex.EncodeToString(h[:]) + ".jpg"
+	ext := ".jpg"
+	switch strings.ToLower(mime) {
+	case "image/png":
+		ext = ".png"
+	case "image/gif":
+		ext = ".gif"
+	case "image/webp":
+		ext = ".webp"
+	}
+	name := hex.EncodeToString(h[:]) + ext
 	p := filepath.Join(s.CoverDir, name)
 	if _, err := os.Stat(p); err == nil {
 		return p
