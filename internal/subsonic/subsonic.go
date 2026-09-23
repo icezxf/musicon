@@ -49,6 +49,39 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/rest/", h.route)
 }
 
+// ==================== raw_url 缓存 ====================
+
+type cachedURL struct {
+	url       string
+	expiresAt time.Time
+}
+
+var rawURLCache = struct {
+	mu sync.RWMutex
+	m  map[string]cachedURL
+}{m: map[string]cachedURL{}}
+
+// getCachedRawURL 缓存每首歌的网盘直链 60 秒，减少 AList 往返。
+// 移动云签名 900 秒有效，60 秒缓存绝对安全。
+func (h *Handler) getCachedRawURL(songID, path string) (string, error) {
+	rawURLCache.mu.RLock()
+	c, ok := rawURLCache.m[songID]
+	rawURLCache.mu.RUnlock()
+	if ok && time.Now().Before(c.expiresAt) {
+		return c.url, nil
+	}
+	u, err := h.AList.GetRawURL(path)
+	if err != nil {
+		return "", err
+	}
+	rawURLCache.mu.Lock()
+	rawURLCache.m[songID] = cachedURL{url: u, expiresAt: time.Now().Add(60 * time.Second)}
+	rawURLCache.mu.Unlock()
+	return u, nil
+}
+
+// ==================== 路由 ====================
+
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/rest/")
 	p = strings.TrimSuffix(p, ".view")
@@ -170,7 +203,6 @@ func (h *Handler) writeResp(w http.ResponseWriter, r *http.Request, status strin
 		"@serverVersion": "0.1.0",
 		"@openSubsonic":  true,
 	}
-	// msg 非空就写 error 元素，code=0 也是合法错误码
 	if msg != "" {
 		resp["error"] = map[string]any{"@code": code, "@message": msg}
 	}
@@ -779,22 +811,20 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 部分网盘 CDN（如移动云 EOS）拒绝 HEAD 请求。
-	// 客户端发 HEAD 探活会拿到 403，导致放弃播放。
-	// 因此 HEAD 不走 302，本地返回元数据头，让客户端继续发 GET。
+	// HEAD 本地返回元数据头（移动云 CDN 拒绝 HEAD）
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
 		w.Header().Set("Accept-Ranges", "bytes")
 		if s.FileSize > 0 {
 			w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
 		}
-		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cache-Control", "private, max-age=60")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// GET 走 302 到网盘直链
-	rawURL, err := h.AList.GetRawURL(s.Path)
+	// GET：用 60 秒缓存减少 AList 往返
+	rawURL, err := h.getCachedRawURL(s.ID, s.Path)
 	if err != nil {
 		h.writeErr(w, r, 0, err.Error())
 		return
@@ -804,8 +834,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("[stream] %s %s -> 302", r.Method, id)
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
+
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Accept-Ranges", "bytes")
+	if s.FileSize > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
+	}
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
@@ -880,7 +914,6 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		return ""
 	}
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		// 容错：去掉所有 "pl-" 前缀，处理 pl-pl-xxx 这种重复
 		realID := id
 		for strings.HasPrefix(realID, "pl-") {
 			realID = strings.TrimPrefix(realID, "pl-")
@@ -1233,7 +1266,6 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) scrobble(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	// 规范默认 submission=true，只有显式 false 才不记录
 	sub := r.URL.Query().Get("submission") != "false"
 	if sub && id != "" {
 		h.DB.RecordPlay(id, "subsonic", r.URL.Query().Get("c"))
