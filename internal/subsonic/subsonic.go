@@ -10,13 +10,13 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-    "io"
-    "log"
-    "path/filepath"
+	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -170,7 +170,7 @@ func (h *Handler) writeResp(w http.ResponseWriter, r *http.Request, status strin
 		"@serverVersion": "0.1.0",
 		"@openSubsonic":  true,
 	}
-	// 只要 msg 非空就写 error 元素，code=0 也是合法错误码
+	// msg 非空就写 error 元素，code=0 也是合法错误码
 	if msg != "" {
 		resp["error"] = map[string]any{"@code": code, "@message": msg}
 	}
@@ -303,7 +303,6 @@ func escapeXML(s string) string {
 
 // ==================== splitArtists ====================
 
-// 包级正则，避免每次调用重新编译
 var splitArtistRe = regexp.MustCompile(`[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*/\s*`)
 
 func splitArtists(s string) []string {
@@ -642,7 +641,6 @@ func (h *Handler) getRandomSongs(w http.ResponseWriter, r *http.Request) {
 		songs = filtered
 	}
 	rand.Shuffle(len(songs), func(i, j int) { songs[i], songs[j] = songs[j], songs[i] })
-	// 规范默认 10
 	size := 10
 	if v := r.URL.Query().Get("size"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -687,7 +685,6 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, s)
 	}
-	// 按播放次数降序
 	sort.Slice(filtered, func(i, j int) bool { return filtered[i].Plays > filtered[j].Plays })
 	if len(filtered) > count {
 		filtered = filtered[:count]
@@ -764,7 +761,6 @@ func (h *Handler) getGenres(w http.ResponseWriter, r *http.Request) {
 			"#text":       g,
 		})
 	}
-	// 按名称排序，输出稳定
 	sort.Slice(out, func(i, j int) bool {
 		return out[i]["#text"].(string) < out[j]["#text"].(string)
 	})
@@ -782,21 +778,54 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, 70, "Song not found")
 		return
 	}
+
+	// 部分网盘 CDN（如移动云 EOS）拒绝 HEAD 请求。
+	// 客户端发 HEAD 探活会拿到 403，导致放弃播放。
+	// 因此 HEAD 不走 302，本地返回元数据头，让客户端继续发 GET。
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
+		w.Header().Set("Accept-Ranges", "bytes")
+		if s.FileSize > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// GET 走 302 到网盘直链
 	rawURL, err := h.AList.GetRawURL(s.Path)
 	if err != nil {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
-	// 日志只打 host+path，避免泄漏签名
 	if u, err := url.Parse(rawURL); err == nil {
 		log.Printf("[stream] %s %s -> 302 %s%s", r.Method, id, u.Host, u.Path)
 	} else {
 		log.Printf("[stream] %s %s -> 302", r.Method, id)
 	}
-	// 防止客户端缓存 302 响应本身
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	http.Redirect(w, r, rawURL, http.StatusFound)
+}
+
+// 从 Fmt 推导 Content-Type，和 songToMap 里的映射保持一致
+func contentTypeForFmt(fmtName string) string {
+	switch strings.ToLower(fmtName) {
+	case "flac":
+		return "audio/flac"
+	case "mp3":
+		return "audio/mpeg"
+	case "m4a", "aac":
+		return "audio/mp4"
+	case "ogg":
+		return "audio/ogg"
+	case "opus":
+		return "audio/opus"
+	case "wav":
+		return "audio/wav"
+	}
+	return "audio/mpeg"
 }
 
 // ==================== 封面 ====================
@@ -841,6 +870,7 @@ func (h *Handler) findCoverPath(id, typ string) string {
 	if typ == "artist" {
 		return ""
 	}
+	// 容错：去掉所有 "pl-" 前缀，处理 pl-pl-xxx 这种重复
 	if typ == "album" || strings.HasPrefix(id, "al-") {
 		songs, _ := h.DB.ListSongs()
 		for _, s := range songs {
@@ -851,7 +881,10 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		return ""
 	}
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		realID := strings.TrimPrefix(id, "pl-")
+		realID := id
+		for strings.HasPrefix(realID, "pl-") {
+			realID = strings.TrimPrefix(realID, "pl-")
+		}
 		songs, _ := h.DB.GetPlaylistSongs(realID)
 		for _, s := range songs {
 			if s.CoverPath != "" {
@@ -868,7 +901,6 @@ func (h *Handler) findCoverPath(id, typ string) string {
 }
 
 func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
-	// 用 Cfg.DataDir 而不是硬编码 /app/data
 	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
 	base := path
@@ -906,7 +938,7 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 		if idx := strings.LastIndex(base, "/"); idx >= 0 {
 			base = base[idx+1:]
 		}
-		alt := "/app/data/covers/" + base
+		alt := filepath.Join(filepath.Dir(path), base)
 		if _, err := os.Stat(alt); err == nil {
 			path = alt
 		}
@@ -926,7 +958,6 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 func proxyImage(w http.ResponseWriter, url string) {
-	// 加超时和大小限制
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -1148,7 +1179,6 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, key stri
 	})
 }
 
-// artistResolver 缓存 artistID -> name 映射
 var artistResolver = struct {
 	mu      sync.RWMutex
 	cache   map[string]string
@@ -1203,7 +1233,6 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) scrobble(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	// 规范默认 submission=true，只有显式 false 才不记录
 	sub := r.URL.Query().Get("submission") != "false"
 	if sub && id != "" {
 		h.DB.RecordPlay(id, "subsonic", r.URL.Query().Get("c"))
