@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/icezxf/musicon-go/internal/alist"
 	"github.com/icezxf/musicon-go/internal/auth"
@@ -27,8 +28,8 @@ type Handler struct {
 	Scan     *scan.Scanner
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s *settings.Manager) *Handler {
-	sc := &scan.Scanner{DB: database, AList: a, CoverDir: c.DataDir + "/covers"}
+func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s *settings.Manager, bgWG *sync.WaitGroup) *Handler {
+	sc := &scan.Scanner{DB: database, AList: a, CoverDir: c.DataDir + "/covers", WG: bgWG}
 	return &Handler{DB: database, AList: a, LX: l, Cfg: c, Settings: s, Scan: sc}
 }
 
@@ -73,6 +74,7 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, u, http.StatusFound)
 }
 
@@ -106,6 +108,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: auth.WebCookieName, Value: token, Path: "/",
 		MaxAge: 30 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: r.TLS != nil,
 	})
 	writeJSON(w, 200, map[string]any{"ok": true, "username": body.Username})
 }
@@ -281,13 +284,14 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
 		Name    string   `json:"name"`
 		Comment string   `json:"comment"`
 		SongIDs []string `json:"song_ids"`
+		Public  bool     `json:"public"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	if body.Name == "" {
 		writeJSON(w, 400, map[string]any{"message": "歌单名不能为空"})
 		return
 	}
-	id, err := h.DB.CreatePlaylist(body.Name, body.Comment, "admin")
+	id, err := h.DB.CreatePlaylist(body.Name, body.Comment, "admin", body.Public)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -429,12 +433,11 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	io.Copy(w, resp.Body)
+	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
 }
 
 // ---------- AList 目录树 ----------
 
-// GET /api/alist/list?path=/xxx
 func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
@@ -462,8 +465,6 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 		"dirs": dirs,
 	})
 }
-
-// ---------- 元数据搜索 ----------
 
 // ---------- 任务 ----------
 
