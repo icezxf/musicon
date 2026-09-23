@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"github.com/icezxf/musicon-go/internal/settings"
 )
 
-// CacheStore 由 db.Holder 实现，用于歌手信息的持久化缓存
+// CacheStore 由 db.Holder 实现
 type CacheStore interface {
 	LoadArtist(name string) (pic, bio, source string, updatedAt time.Time, ok bool)
 	SaveArtist(name, pic, bio, source string) error
@@ -34,7 +35,6 @@ func New(s *settings.Manager, c CacheStore) *Client {
 	}
 }
 
-// 缓存 7 天
 const artistCacheTTL = 7 * 24 * time.Hour
 
 func (c *Client) base() string {
@@ -154,7 +154,7 @@ func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 	if err != nil {
 		return nil, err
 	}
-	raws := extractSongList(body)
+	raws := extractList(body)
 	out := make([]Song, 0, len(raws))
 	for _, m := range raws {
 		out = append(out, parseSong(m))
@@ -162,7 +162,8 @@ func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 	return out, nil
 }
 
-func extractSongList(body []byte) []map[string]any {
+// extractList 兼容多种响应结构，提取对象数组
+func extractList(body []byte) []map[string]any {
 	var r1 struct {
 		Data struct {
 			List []map[string]any `json:"list"`
@@ -297,15 +298,6 @@ func extractURL(body []byte) string {
 	if err := json.Unmarshal(body, &r3); err == nil && r3.URL != "" {
 		return r3.URL
 	}
-	var r4 struct {
-		Success bool `json:"success"`
-		Data    struct {
-			URL string `json:"url"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &r4); err == nil && r4.Success && r4.Data.URL != "" {
-		return r4.Data.URL
-	}
 	return ""
 }
 
@@ -356,7 +348,7 @@ func extractLyric(body []byte) string {
 	return ""
 }
 
-// ============ 歌手（带缓存） ============
+// ============ 歌手（方案 B：search + artistDetail 两步） ============
 
 type SingerDetail struct {
 	Name   string `json:"name"`
@@ -366,7 +358,7 @@ type SingerDetail struct {
 	Source string `json:"source"`
 }
 
-// GetSingerDetail 查询歌手详情。命中缓存则直接返回，未命中才打 LX。
+// GetSingerDetail 查询歌手详情。命中缓存直接返回；未命中则打 lxserver。
 func (c *Client) GetSingerDetail(name string) (*SingerDetail, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty name")
@@ -380,56 +372,194 @@ func (c *Client) GetSingerDetail(name string) (*SingerDetail, error) {
 		}
 	}
 
-	// 2. 打 LX
-	d, err := c.fetchSinger(name)
-	if err != nil {
-		return nil, err
+	// 2. 依次尝试 tx → wy
+	var lastErr error
+	for _, src := range []string{"tx", "wy"} {
+		d, err := c.fetchSingerTwoStep(name, src)
+		if err == nil && d != nil && (d.Pic != "" || d.Bio != "") {
+			if c.cache != nil {
+				_ = c.cache.SaveArtist(name, d.Pic, d.Bio, src)
+			}
+			return d, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
 	}
-
-	// 3. 回写缓存
-	if c.cache != nil && (d.Pic != "" || d.Bio != "") {
-		_ = c.cache.SaveArtist(name, d.Pic, d.Bio, d.Source)
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	return d, nil
+	return &SingerDetail{Name: name}, nil
 }
 
-// RefreshSingerDetail 忽略缓存，强制刷新
+// RefreshSingerDetail 忽略缓存
 func (c *Client) RefreshSingerDetail(name string) (*SingerDetail, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty name")
 	}
-	d, err := c.fetchSinger(name)
-	if err != nil {
-		return nil, err
-	}
-	if c.cache != nil && (d.Pic != "" || d.Bio != "") {
-		_ = c.cache.SaveArtist(name, d.Pic, d.Bio, d.Source)
-	}
-	return d, nil
-}
-
-func (c *Client) fetchSinger(name string) (*SingerDetail, error) {
-	params := url.Values{}
-	params.Set("name", name)
-	body, err := c.get("/api/music/singer/detail", params)
-	if err != nil {
-		return nil, err
-	}
-	var d SingerDetail
-	if err := json.Unmarshal(body, &d); err == nil && (d.Name != "" || d.Pic != "") {
-		if d.Name == "" {
-			d.Name = name
+	var lastErr error
+	for _, src := range []string{"tx", "wy"} {
+		d, err := c.fetchSingerTwoStep(name, src)
+		if err == nil && d != nil && (d.Pic != "" || d.Bio != "") {
+			if c.cache != nil {
+				_ = c.cache.SaveArtist(name, d.Pic, d.Bio, src)
+			}
+			return d, nil
 		}
-		return &d, nil
-	}
-	var r struct {
-		Data SingerDetail `json:"data"`
-	}
-	if err := json.Unmarshal(body, &r); err == nil {
-		if r.Data.Name == "" {
-			r.Data.Name = name
+		if err != nil {
+			lastErr = err
 		}
-		return &r.Data, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
 	}
 	return &SingerDetail{Name: name}, nil
+}
+
+// fetchSingerTwoStep：先用 search?type=singer 拿 mid + 头像，再用 artistDetail 拿简介
+func (c *Client) fetchSingerTwoStep(name, source string) (*SingerDetail, error) {
+	// Step 1: 搜索歌手
+	params := url.Values{}
+	params.Set("source", source)
+	params.Set("name", name)
+	params.Set("type", "singer")
+	params.Set("limit", "5")
+	body, err := c.get("/api/music/search", params)
+	if err != nil {
+		return nil, fmt.Errorf("search singer: %w", err)
+	}
+
+	raws := extractList(body)
+	if len(raws) == 0 {
+		return nil, fmt.Errorf("no singer result for %q", name)
+	}
+
+	// 优先取 name 完全匹配的，否则取第一条
+	var hit map[string]any
+	for _, m := range raws {
+		if n, _ := m["name"].(string); n == name {
+			hit = m
+			break
+		}
+	}
+	if hit == nil {
+		hit = raws[0]
+	}
+
+	mid := strField(hit, "mid", "singerMid", "singer_mid", "id")
+	pic := strField(hit, "picUrl", "pic", "img", "avatar")
+	matchedName := strField(hit, "name")
+	if matchedName == "" {
+		matchedName = name
+	}
+
+	// 图片规范化：换 500x500、http → https
+	if pic != "" {
+		pic = strings.Replace(pic, "R300x300M000", "R500x500M000", 1)
+		pic = strings.Replace(pic, "R800x800M000", "R500x500M000", 1)
+		if strings.HasPrefix(pic, "http://") {
+			pic = "https://" + pic[len("http://"):]
+		}
+	}
+
+	if mid == "" {
+		// 拿不到 mid，只能返回头像
+		return &SingerDetail{Name: matchedName, Pic: pic, Source: source}, nil
+	}
+
+	// Step 2: artistDetail 拿简介
+	bio := ""
+	params2 := url.Values{}
+	params2.Set("id", mid)
+	params2.Set("source", source)
+	if body2, err := c.get("/api/music/artistDetail", params2); err == nil {
+		bio = extractArtistBio(body2)
+		// artistDetail 里可能也有头像，优先用它
+		if p2 := extractArtistPicFromDetail(body2); p2 != "" {
+			p2 = strings.Replace(p2, "R300x300M000", "R500x500M000", 1)
+			if strings.HasPrefix(p2, "http://") {
+				p2 = "https://" + p2[len("http://"):]
+			}
+			pic = p2
+		}
+	}
+
+	return &SingerDetail{
+		Name:   matchedName,
+		Pic:    pic,
+		Bio:    bio,
+		MID:    mid,
+		Source: source,
+	}, nil
+}
+
+// extractArtistBio 从 artistDetail 的响应里提取简介
+// 兼容 {desc}、{briefDesc}、{data:{desc}}、{introduction:[{txt}]} 等结构
+func extractArtistBio(body []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	if s := bioFromMap(m); s != "" {
+		return s
+	}
+	if data, ok := m["data"].(map[string]any); ok {
+		if s := bioFromMap(data); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func bioFromMap(m map[string]any) string {
+	if s, ok := m["desc"].(string); ok && strings.TrimSpace(s) != "" {
+		return cleanBio(s)
+	}
+	if s, ok := m["briefDesc"].(string); ok && strings.TrimSpace(s) != "" {
+		return cleanBio(s)
+	}
+	if s, ok := m["biography"].(string); ok && strings.TrimSpace(s) != "" {
+		return cleanBio(s)
+	}
+	if intro, ok := m["introduction"].([]any); ok && len(intro) > 0 {
+		if first, ok := intro[0].(map[string]any); ok {
+			if s, ok := first["txt"].(string); ok && strings.TrimSpace(s) != "" {
+				return cleanBio(s)
+			}
+		}
+	}
+	return ""
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]+>`)
+
+func cleanBio(s string) string {
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+	return strings.TrimSpace(s)
+}
+
+// extractArtistPicFromDetail 从 artistDetail 里找头像字段
+func extractArtistPicFromDetail(body []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	if p := picFromMap(m); p != "" {
+		return p
+	}
+	if data, ok := m["data"].(map[string]any); ok {
+		return picFromMap(data)
+	}
+	return ""
+}
+
+func picFromMap(m map[string]any) string {
+	for _, k := range []string{"pic", "avatar", "img", "cover", "picUrl", "singerPic"} {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
 }
