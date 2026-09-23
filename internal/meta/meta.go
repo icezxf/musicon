@@ -213,14 +213,18 @@ func allVC(vc map[string][]string, keys ...string) string {
 	return ""
 }
 
-// flacDuration 用 mewkiz/flac 读 STREAMINFO
+// flacDuration 用 mewkiz/flac 读 STREAMINFO 算时长
 func flacDuration(data []byte) int {
 	defer func() { recover() }()
-	stream, err := flacParseHelper(data)
-	if err != nil || stream == 0 {
+	stream, err := flac.Parse(bytes.NewReader(data))
+	if err != nil || stream == nil {
 		return 0
 	}
-	return stream
+	defer stream.Close()
+	if stream.Info.SampleRate == 0 {
+		return 0
+	}
+	return int(stream.Info.NSamples / uint64(stream.Info.SampleRate))
 }
 
 // ---------- 文件名 fallback ----------
