@@ -15,7 +15,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
