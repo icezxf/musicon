@@ -3,12 +3,21 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/disintegration/imaging"
 
 	"github.com/icezxf/musicon-go/internal/alist"
 	"github.com/icezxf/musicon-go/internal/auth"
@@ -319,22 +328,32 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// 修复：错误不再被吞掉
 func (h *Handler) patchPlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
 	var body map[string]any
 	json.NewDecoder(r.Body).Decode(&body)
 	if v, ok := body["song_ids_to_add"].([]any); ok {
-		h.DB.AddSongsToPlaylist(id, toStrings(v))
+		if err := h.DB.AddSongsToPlaylist(id, toStrings(v)); err != nil {
+			writeJSON(w, 500, map[string]any{"detail": err.Error()})
+			return
+		}
 	}
 	if v, ok := body["song_ids_to_remove"].([]any); ok {
-		h.DB.RemoveSongsFromPlaylist(id, toStrings(v))
+		if err := h.DB.RemoveSongsFromPlaylist(id, toStrings(v)); err != nil {
+			writeJSON(w, 500, map[string]any{"detail": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, 200, map[string]any{"message": "歌单已更新"})
 }
 
 func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
-	h.DB.DeletePlaylist(id)
+	if err := h.DB.DeletePlaylist(id); err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"message": "歌单已删除"})
 }
 
@@ -425,7 +444,15 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	resp, err := http.Get(d.Pic)
+	client := &http.Client{Timeout: 15e9}
+	req, err := http.NewRequest("GET", d.Pic, nil)
+	if err != nil {
+		http.Error(w, "bad url", 400)
+		return
+	}
+	req.Header.Set("Referer", "https://y.qq.com/")
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return
@@ -434,6 +461,67 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
+}
+
+// ---------- 封面缩略图 ----------
+
+func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/covers/thumb/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) < 2 {
+		http.Error(w, "bad path", 400)
+		return
+	}
+	size, err := strconv.Atoi(parts[0])
+	if err != nil || size <= 0 || size > 2000 {
+		size = 96
+	}
+	// 用 Base 去掉路径成分，再拒绝 "." 和 ".."
+	filename := filepath.Base(parts[1])
+	if filename == "." || filename == ".." || filename == "" {
+		http.Error(w, "bad filename", 400)
+		return
+	}
+	for _, c := range filename {
+		if !(c == '.' || c == '-' || c == '_' ||
+			(c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z')) {
+			http.Error(w, "bad filename", 400)
+			return
+		}
+	}
+	srcPath := filepath.Join(h.Cfg.DataDir, "covers", filename)
+	if _, err := os.Stat(srcPath); err != nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
+	os.MkdirAll(thumbDir, 0755)
+	ext := filepath.Ext(filename)
+	base := strings.TrimSuffix(filename, ext)
+	thumbPath := filepath.Join(thumbDir, fmt.Sprintf("%s_%d.jpg", base, size))
+	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
+		http.ServeFile(w, r, thumbPath)
+		return
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	defer f.Close()
+	src, _, err := image.Decode(f)
+	if err != nil {
+		http.ServeFile(w, r, srcPath)
+		return
+	}
+	thumb := imaging.Fill(src, size, size, imaging.Center, imaging.Lanczos)
+	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(85)); err != nil {
+		http.Error(w, "save failed", 500)
+		return
+	}
+	http.ServeFile(w, r, thumbPath)
 }
 
 // ---------- AList 目录树 ----------
@@ -464,6 +552,49 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 		"path": path,
 		"dirs": dirs,
 	})
+}
+
+// ---------- 元数据搜索 / 歌词（转 LX） ----------
+
+func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
+	kw := r.URL.Query().Get("keyword")
+	if kw == "" {
+		writeJSON(w, 400, map[string]any{"detail": "keyword required"})
+		return
+	}
+	lxURL := h.Settings.GetLXURL()
+	u := strings.TrimRight(lxURL, "/") + "/api/music/search?source=tx&name=" + url.QueryEscape(kw) + "&type=song"
+	client := &http.Client{Timeout: 15e9}
+	resp, err := client.Get(u)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data any
+	json.NewDecoder(resp.Body).Decode(&data)
+	writeJSON(w, 200, map[string]any{"results": data})
+}
+
+func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
+	source := r.URL.Query().Get("source")
+	songID := r.URL.Query().Get("songId")
+	if source == "" || songID == "" {
+		writeJSON(w, 400, map[string]any{"detail": "source and songId required"})
+		return
+	}
+	lxURL := h.Settings.GetLXURL()
+	u := strings.TrimRight(lxURL, "/") + "/api/music/lyric?source=" + url.QueryEscape(source) + "&songId=" + url.QueryEscape(songID)
+	client := &http.Client{Timeout: 15e9}
+	resp, err := client.Get(u)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var data any
+	json.NewDecoder(resp.Body).Decode(&data)
+	writeJSON(w, 200, data)
 }
 
 // ---------- 任务 ----------
