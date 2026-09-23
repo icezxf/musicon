@@ -2,12 +2,10 @@ package meta
 
 import (
 	"bytes"
-	"io"
 	"regexp"
 	"strings"
 
 	"github.com/dhowden/tag"
-	"github.com/mewkiz/flac"
 )
 
 type Info struct {
@@ -22,38 +20,54 @@ type Info struct {
 	CoverMime   string
 }
 
-// Parse 解析音频（data 为文件前 1MB；filename 用于 fallback）
 func Parse(data []byte, filename string) (*Info, error) {
 	info := &Info{}
 
-	// 1) 标准标签解析
 	if m, err := tag.ReadFrom(bytes.NewReader(data)); err == nil {
 		info.Title = strings.TrimSpace(m.Title())
 		info.Artist = strings.TrimSpace(m.Artist())
 		info.Album = strings.TrimSpace(m.Album())
 		info.AlbumArtist = strings.TrimSpace(m.AlbumArtist())
 		info.Genre = strings.TrimSpace(m.Genre())
+
 		if pic := m.Picture(); pic != nil {
 			info.CoverData = pic.Data
 			info.CoverMime = pic.MIMEType
 		}
 		info.Lyrics = extractLyrics(m)
+
+		// 从 Raw 里读所有艺术家（FLAC 多 ARTIST / MP3 多 TPE1）
+		if raw := m.Raw(); raw != nil {
+			for _, key := range []string{"ARTIST", "TPE1", "albumartist", "TPE2"} {
+				if v, ok := raw[key]; ok {
+					multi := extractMulti(v)
+					if multi != "" {
+						if key == "ARTIST" || key == "TPE1" {
+							info.Artist = multi
+						} else if key == "albumartist" || key == "TPE2" {
+							info.AlbumArtist = multi
+						}
+						break
+					}
+				}
+			}
+		}
 	}
 
-	// 2) FLAC 手工补全（处理 dhowden/tag 漏掉的 vorbis comment）
+	// FLAC 手工补全
 	if len(data) >= 4 && string(data[:4]) == "fLaC" {
 		vc := parseFLACVorbis(data)
 		if info.Title == "" {
 			info.Title = firstVC(vc, "TITLE")
 		}
 		if info.Artist == "" {
-			info.Artist = firstVC(vc, "ARTIST")
+			info.Artist = allVC(vc, "ARTIST")
 		}
 		if info.Album == "" {
 			info.Album = firstVC(vc, "ALBUM")
 		}
 		if info.AlbumArtist == "" {
-			info.AlbumArtist = firstVC(vc, "ALBUMARTIST", "ALBUM_ARTIST")
+			info.AlbumArtist = allVC(vc, "ALBUMARTIST", "ALBUM_ARTIST")
 		}
 		if info.Genre == "" {
 			info.Genre = firstVC(vc, "GENRE")
@@ -61,13 +75,12 @@ func Parse(data []byte, filename string) (*Info, error) {
 		if info.Lyrics == "" {
 			info.Lyrics = firstVC(vc, "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS")
 		}
-		// 时长
 		if info.Duration == 0 {
 			info.Duration = flacDuration(data)
 		}
 	}
 
-	// 3) 文件名 fallback
+	// 文件名 fallback
 	if info.Title == "" {
 		info.Title = titleFromFilename(filename)
 	}
@@ -82,6 +95,33 @@ func Parse(data []byte, filename string) (*Info, error) {
 	info.AlbumArtist = repairMojibake(info.AlbumArtist)
 
 	return info, nil
+}
+
+// extractMulti 把多值元数据合并
+func extractMulti(v any) string {
+	switch x := v.(type) {
+	case []string:
+		var out []string
+		for _, s := range x {
+			s = strings.TrimSpace(s)
+			if s != "" && !containsStr(out, s) {
+				out = append(out, s)
+			}
+		}
+		return strings.Join(out, "、")
+	case string:
+		return strings.TrimSpace(x)
+	}
+	return ""
+}
+
+func containsStr(arr []string, s string) bool {
+	for _, x := range arr {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- FLAC 手工解析 ----------
@@ -100,7 +140,7 @@ func parseFLACVorbis(data []byte) map[string][]string {
 		if pos+4+blockLen > len(data) {
 			break
 		}
-		if blockType == 4 { // VORBIS_COMMENT
+		if blockType == 4 {
 			comment := data[pos+4 : pos+4+blockLen]
 			parseVorbisComment(comment, out)
 			return out
@@ -156,30 +196,41 @@ func firstVC(vc map[string][]string, keys ...string) string {
 	return ""
 }
 
+// allVC 把多个值合并（FLAC 里多艺术家）
+func allVC(vc map[string][]string, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := vc[k]; ok && len(v) > 0 {
+			var out []string
+			for _, s := range v {
+				s = strings.TrimSpace(s)
+				if s != "" && !containsStr(out, s) {
+					out = append(out, s)
+				}
+			}
+			return strings.Join(out, "、")
+		}
+	}
+	return ""
+}
+
 // flacDuration 用 mewkiz/flac 读 STREAMINFO
 func flacDuration(data []byte) int {
-	stream, err := flac.Parse(bytes.NewReader(data))
-	if err != nil || stream == nil {
+	defer func() { recover() }()
+	stream, err := flacParseHelper(data)
+	if err != nil || stream == 0 {
 		return 0
 	}
-	defer stream.Close()
-	if stream.Info.SampleRate == 0 {
-		return 0
-	}
-	// mewkiz/flac 用 NSamples（uint64），不是 TotalSamples
-	return int(stream.Info.NSamples / uint64(stream.Info.SampleRate))
+	return stream
 }
+
 // ---------- 文件名 fallback ----------
 
-var (
-	reArtistTitle = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
-)
+var reArtistTitle = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
 
 func titleFromFilename(fn string) string {
 	if fn == "" {
 		return ""
 	}
-	// 去掉扩展名
 	if i := strings.LastIndexByte(fn, '.'); i > 0 {
 		fn = fn[:i]
 	}
@@ -194,7 +245,6 @@ func artistFromFilename(fn, currentTitle string) (string, string) {
 	if i := strings.LastIndexByte(name, '.'); i > 0 {
 		name = name[:i]
 	}
-	// 匹配 "艺术家 - 标题"
 	if m := reArtistTitle.FindStringSubmatch(name); m != nil {
 		a := strings.TrimSpace(m[1])
 		t := strings.TrimSpace(m[2])
@@ -279,7 +329,7 @@ func ParseLRC(s string) []LRCLine {
 		}
 		ms := lrcRe.FindAllStringSubmatchIndex(line, -1)
 		if len(ms) == 0 {
-			out = append(out, LRCLine{Value: line})
+			out = append(out, LRCLine{Start: -1, Value: line})
 			continue
 		}
 		text := strings.TrimSpace(lrcRe.ReplaceAllString(line, ""))
@@ -314,5 +364,3 @@ func atoi(s string) int {
 	}
 	return n
 }
-
-var _ = io.EOF
