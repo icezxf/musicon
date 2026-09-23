@@ -14,17 +14,28 @@ import (
 	"github.com/icezxf/musicon-go/internal/settings"
 )
 
+// CacheStore 由 db.Holder 实现，用于歌手信息的持久化缓存
+type CacheStore interface {
+	LoadArtist(name string) (pic, bio, source string, updatedAt time.Time, ok bool)
+	SaveArtist(name, pic, bio, source string) error
+}
+
 type Client struct {
 	Settings *settings.Manager
+	cache    CacheStore
 	http     *http.Client
 }
 
-func New(s *settings.Manager) *Client {
+func New(s *settings.Manager, c CacheStore) *Client {
 	return &Client{
 		Settings: s,
+		cache:    c,
 		http:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
+
+// 缓存 7 天
+const artistCacheTTL = 7 * 24 * time.Hour
 
 func (c *Client) base() string {
 	if v := c.Settings.GetLXURL(); v != "" {
@@ -109,22 +120,16 @@ type Song struct {
 	Raw      map[string]any `json:"-"`
 }
 
-// Info 返回原始字段 map，用于传给 lxserver 的 /api/music/url
 func (s *Song) Info() map[string]any {
 	if s.Raw != nil {
 		return s.Raw
 	}
-	// 兜底：重建一个最小 map
 	return map[string]any{
-		"id":     s.ID,
-		"name":   s.Name,
-		"singer": s.Singer,
-		"album":  s.Album,
-		"source": s.Source,
+		"id": s.ID, "name": s.Name, "singer": s.Singer,
+		"album": s.Album, "source": s.Source,
 	}
 }
 
-// Search 搜索歌曲。source 可为 tx/wy/kg/kw/mg 等，默认 wy。
 func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 	if query == "" {
 		return nil, fmt.Errorf("empty query")
@@ -157,7 +162,6 @@ func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 	return out, nil
 }
 
-// extractSongList 尝试多种响应结构，提取歌曲数组。
 func extractSongList(body []byte) []map[string]any {
 	var r1 struct {
 		Data struct {
@@ -220,7 +224,6 @@ func strField(m map[string]any, keys ...string) string {
 	return ""
 }
 
-// parseDuration 支持 "03:35"、"215"、"215000" 三种格式，统一返回秒。
 func parseDuration(s string) int {
 	if s == "" {
 		return 0
@@ -240,7 +243,7 @@ func parseDuration(s string) int {
 		}
 	}
 	if n, err := strconv.Atoi(s); err == nil {
-		if n > 10000 { // 毫秒
+		if n > 10000 {
 			return n / 1000
 		}
 		return n
@@ -250,8 +253,6 @@ func parseDuration(s string) int {
 
 // ============ 播放 URL ============
 
-// GetSongURL 通过 lxserver 拿到歌曲的真实播放地址。
-// songInfo 应该是 Search 返回的原始对象（Song.Raw），必须包含 source 字段。
 func (c *Client) GetSongURL(songInfo map[string]any, quality string) (string, error) {
 	if songInfo == nil {
 		return "", fmt.Errorf("nil songInfo")
@@ -263,14 +264,8 @@ func (c *Client) GetSongURL(songInfo map[string]any, quality string) (string, er
 	if quality == "" {
 		quality = "320k"
 	}
-
-	payload := map[string]any{
-		"songInfo": songInfo,
-		"quality":  quality,
-	}
-	headers := map[string]string{
-		"x-user-name": "open", // 公开用户，对应面板里的"自定义源归属用户"
-	}
+	payload := map[string]any{"songInfo": songInfo, "quality": quality}
+	headers := map[string]string{"x-user-name": "open"}
 	body, err := c.post("/api/music/url", payload, headers)
 	if err != nil {
 		return "", err
@@ -302,7 +297,6 @@ func extractURL(body []byte) string {
 	if err := json.Unmarshal(body, &r3); err == nil && r3.URL != "" {
 		return r3.URL
 	}
-	// lxserver 有时返回 {success:true, data:{url:"..."}}
 	var r4 struct {
 		Success bool `json:"success"`
 		Data    struct {
@@ -362,7 +356,7 @@ func extractLyric(body []byte) string {
 	return ""
 }
 
-// ============ 歌手 ============
+// ============ 歌手（带缓存） ============
 
 type SingerDetail struct {
 	Name   string `json:"name"`
@@ -372,10 +366,49 @@ type SingerDetail struct {
 	Source string `json:"source"`
 }
 
+// GetSingerDetail 查询歌手详情。命中缓存则直接返回，未命中才打 LX。
 func (c *Client) GetSingerDetail(name string) (*SingerDetail, error) {
 	if name == "" {
 		return nil, fmt.Errorf("empty name")
 	}
+
+	// 1. 查缓存
+	if c.cache != nil {
+		pic, bio, source, updatedAt, ok := c.cache.LoadArtist(name)
+		if ok && pic != "" && time.Since(updatedAt) < artistCacheTTL {
+			return &SingerDetail{Name: name, Pic: pic, Bio: bio, Source: source}, nil
+		}
+	}
+
+	// 2. 打 LX
+	d, err := c.fetchSinger(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. 回写缓存
+	if c.cache != nil && (d.Pic != "" || d.Bio != "") {
+		_ = c.cache.SaveArtist(name, d.Pic, d.Bio, d.Source)
+	}
+	return d, nil
+}
+
+// RefreshSingerDetail 忽略缓存，强制刷新
+func (c *Client) RefreshSingerDetail(name string) (*SingerDetail, error) {
+	if name == "" {
+		return nil, fmt.Errorf("empty name")
+	}
+	d, err := c.fetchSinger(name)
+	if err != nil {
+		return nil, err
+	}
+	if c.cache != nil && (d.Pic != "" || d.Bio != "") {
+		_ = c.cache.SaveArtist(name, d.Pic, d.Bio, d.Source)
+	}
+	return d, nil
+}
+
+func (c *Client) fetchSinger(name string) (*SingerDetail, error) {
 	params := url.Values{}
 	params.Set("name", name)
 	body, err := c.get("/api/music/singer/detail", params)
@@ -384,13 +417,19 @@ func (c *Client) GetSingerDetail(name string) (*SingerDetail, error) {
 	}
 	var d SingerDetail
 	if err := json.Unmarshal(body, &d); err == nil && (d.Name != "" || d.Pic != "") {
+		if d.Name == "" {
+			d.Name = name
+		}
 		return &d, nil
 	}
 	var r struct {
 		Data SingerDetail `json:"data"`
 	}
 	if err := json.Unmarshal(body, &r); err == nil {
+		if r.Data.Name == "" {
+			r.Data.Name = name
+		}
 		return &r.Data, nil
 	}
-	return &d, nil
+	return &SingerDetail{Name: name}, nil
 }
