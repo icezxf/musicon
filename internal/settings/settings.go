@@ -10,6 +10,7 @@ import (
 type Manager struct {
 	db       *sql.DB
 	mu       sync.RWMutex
+	reloadMu sync.Mutex
 	cache    map[string]string
 	loadedAt time.Time
 }
@@ -61,6 +62,24 @@ func (m *Manager) GetAll() map[string]string {
 }
 
 func (m *Manager) reload() {
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	// 别人刚 reload 过，直接返回
+	m.mu.RLock()
+	fresh := time.Since(m.loadedAt) < time.Second
+	m.mu.RUnlock()
+	if fresh {
+		return
+	}
+
+	// 无论成功失败都更新 loadedAt，避免 DB 故障时每请求打一次
+	defer func() {
+		m.mu.Lock()
+		m.loadedAt = time.Now()
+		m.mu.Unlock()
+	}()
+
 	rows, err := m.db.Query(`SELECT key, value FROM app_settings`)
 	if err != nil {
 		return
@@ -69,16 +88,17 @@ func (m *Manager) reload() {
 	newCache := map[string]string{}
 	for rows.Next() {
 		var k, v string
-		rows.Scan(&k, &v)
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
 		newCache[k] = v
 	}
 	m.mu.Lock()
 	m.cache = newCache
-	m.loadedAt = time.Now()
 	m.mu.Unlock()
 }
 
-// ---- AList 配置读取（兼容 v3 前端的 storage_providers JSON） ----
+// ---------- 以下保持原有逻辑不变 ----------
 
 type AListConfig struct {
 	URL      string
@@ -95,8 +115,6 @@ func (m *Manager) GetAList() *AListConfig {
 		Pass:  m.Get("alist_password"),
 		Token: m.Get("alist_token"),
 	}
-
-	// 优先从 storage_providers JSON 里读（v3 前端用这个）
 	raw := m.Get("storage_providers")
 	if raw != "" {
 		var list []struct {
