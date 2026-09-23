@@ -792,13 +792,13 @@ async function renderArtistHeader(){
   const box = document.getElementById('artist-header');
   if (!box) return;
 
-  // 只有 state.view === 'artist' 才显示
+  // 非 artist 视图：无条件隐藏并清空（避免残留）
   if (state.view !== 'artist' || !state.filterArtist){
-    if (_lastArtistHeaderName !== null){
+    if (box.style.display !== 'none' || box.innerHTML !== ''){
       box.style.display = 'none';
       box.innerHTML = '';
-      _lastArtistHeaderName = null;
     }
+    _lastArtistHeaderName = null;
     return;
   }
 
