@@ -681,7 +681,7 @@ function isVirtual(s){
 function currentList(){ return state.view === 'playlist' ? state.playlistTracks : state.songs; }
 
 function matchesFilter(s){
-  if (state.filterArtist && (s.artist || '') !== state.filterArtist) return false;
+  if (state.filterArtist && splitArtists(s.artist).indexOf(state.filterArtist) === -1) return false;
   if (state.filterAlbum && (s.album || '') !== state.filterAlbum) return false;
   const isV = (s.fmt === 'VIRTUAL') || String(s.id || '').startsWith('lxv-');
   const prov = $('#f-provider') ? $('#f-provider').value : '';
@@ -995,14 +995,24 @@ function selectAllView(){
   saveUIState();
 }
 
+function splitArtists(str){
+  return String(str || '')
+    .split(/[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
+    .map(function(x){ return x.trim(); })
+    .filter(function(x){ return x; });
+}
+
 function aggregateArtists(){
   const map = new Map();
   state.songs.forEach(function(s){
-    const name = (s.artist || '未知艺术家').trim() || '未知艺术家';
-    if (!map.has(name)) map.set(name, { name: name, count: 0, sample: s });
-    const e = map.get(name);
-    e.count++;
-    if (!e.sample.cover_path && s.cover_path) e.sample = s;
+    let names = splitArtists(s.artist);
+    if (!names.length) names = ['未知艺术家'];
+    names.forEach(function(name){
+      if (!map.has(name)) map.set(name, { name: name, count: 0, sample: s });
+      const e = map.get(name);
+      e.count++;
+      if (!e.sample.cover_path && s.cover_path) e.sample = s;
+    });
   });
   return Array.from(map.values()).sort(function(a, b){ return b.count - a.count; });
 }
