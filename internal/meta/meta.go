@@ -148,8 +148,8 @@ func Parse(data []byte, filename string) (*Info, error) {
 			if sr > 0 && ch > 0 && bps > 0 {
 				info.Bitrate = sr * ch * bps / 1000
 			}
-			if info.Duration == 0 {
-				info.Duration = int(stream.Duration().Seconds())
+			if info.Duration == 0 && sr > 0 && stream.Info.NSamples > 0 {
+				info.Duration = int(stream.Info.NSamples / uint64(sr))
 			}
 			stream.Close()
 		}
