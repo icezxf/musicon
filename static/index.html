@@ -96,17 +96,16 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .btn-ghost.danger{color:var(--danger)}
 .btn-ghost.danger:hover{background:rgba(239,68,68,.12);color:var(--danger-h)}
 
-/* 艺术家头部卡片 */
-.artist-header{padding:20px 12px 24px;display:flex;gap:20px;align-items:flex-start;
-  border-bottom:1px solid var(--border);margin-bottom:8px}
-.artist-header-avatar{width:120px;height:120px;border-radius:50%;flex-shrink:0;
+/* 艺术家头部：头像左浮动，名字/简介/来源作为块级元素自然环绕 */
+.artist-header{padding:20px 12px 24px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.artist-header::after{content:"";display:table;clear:both}
+.artist-header-avatar{float:left;width:120px;height:120px;border-radius:50%;
   background:linear-gradient(135deg,#6366f1,#a855f7);
   display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:700;color:#fff;
-  overflow:hidden;background-size:cover;background-position:center;background-repeat:no-repeat}
-.artist-header-info{flex:1;min-width:0;padding-top:8px}
-.artist-header-name{font-size:24px;font-weight:600;margin-bottom:10px;letter-spacing:-.3px}
-.artist-header-bio{font-size:13px;color:var(--text-2);line-height:1.7;max-height:140px;
-  overflow-y:auto;white-space:pre-wrap;padding-right:8px}
+  overflow:hidden;background-size:cover;background-position:center;background-repeat:no-repeat;
+  margin-right:20px;margin-bottom:8px}
+.artist-header-name{font-size:24px;font-weight:600;margin-bottom:10px;letter-spacing:-.3px;line-height:1.3}
+.artist-header-bio{font-size:13px;color:var(--text-2);line-height:1.7;white-space:pre-wrap}
 .artist-header-meta{font-size:11px;color:var(--text-3);margin-top:8px}
 
 .list-wrap{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 28px 100px}
@@ -360,11 +359,10 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .icon-btn{width:36px;height:36px}
   #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
   #view-artists, #view-albums{overflow-y:auto}
-  .artist-header{flex-direction:column;align-items:center;text-align:center;padding:16px 12px}
-  .artist-header-avatar{width:100px;height:100px;font-size:40px}
-  .artist-header-info{padding-top:0;width:100%}
-  .artist-header-name{font-size:20px;margin-bottom:8px}
-  .artist-header-bio{max-height:100px;font-size:12.5px}
+  .artist-header{padding:16px 12px 20px}
+  .artist-header-avatar{width:80px;height:80px;font-size:32px;margin-right:14px}
+  .artist-header-name{font-size:18px;margin-bottom:6px}
+  .artist-header-bio{font-size:12.5px}
   #online-modal .modal{width:100vw;height:100vh;max-height:100vh;border-radius:0;padding:16px}
   #online-modal .online-row{grid-template-columns:32px 40px 1fr 60px}
   #online-modal .online-row .orow-artist,
@@ -552,7 +550,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </main>
 </div>
 
-<!-- 新建歌单弹窗 -->
 <div class="modal-bg" id="pl-modal">
   <div class="modal">
     <div class="modal-title">新建歌单</div>
@@ -575,7 +572,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
-<!-- 新建扫描弹窗 -->
 <div class="modal-bg" id="scan-modal">
   <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
@@ -594,7 +590,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
-<!-- 在线搜索弹窗 -->
 <div class="modal-bg" id="online-modal">
   <div class="modal">
     <div class="modal-title">在线搜索歌曲</div>
@@ -791,14 +786,14 @@ function renderArtistLinks(s){
   }).join('、');
 }
 
-/* ---------- 艺术家头部（头像 + 简介） ---------- */
+/* ---------- 艺术家头部 ---------- */
 let _lastArtistHeaderName = null;
 async function renderArtistHeader(){
   const box = document.getElementById('artist-header');
   if (!box) return;
 
-  // 没有筛选艺术家 → 隐藏
-  if (!state.filterArtist){
+  // 只有 state.view === 'artist' 才显示
+  if (state.view !== 'artist' || !state.filterArtist){
     if (_lastArtistHeaderName !== null){
       box.style.display = 'none';
       box.innerHTML = '';
@@ -807,22 +802,20 @@ async function renderArtistHeader(){
     return;
   }
 
-  // 已渲染同一个艺术家 → 跳过
   if (_lastArtistHeaderName === state.filterArtist) return;
   _lastArtistHeaderName = state.filterArtist;
 
   const name = state.filterArtist;
   const initial = name.charAt(0).toUpperCase();
+
+  // 直接让三个块级元素作为 artist-header 子元素，配合 float 头像 → 文字环绕
   box.style.display = '';
   box.innerHTML =
     '<div class="artist-header-avatar" id="artist-header-avatar">' + esc(initial) + '</div>'
-    + '<div class="artist-header-info">'
-    +   '<div class="artist-header-name">' + esc(name) + '</div>'
-    +   '<div class="artist-header-bio" id="artist-header-bio">加载中…</div>'
-    +   '<div class="artist-header-meta" id="artist-header-meta"></div>'
-    + '</div>';
+    + '<div class="artist-header-name">' + esc(name) + '</div>'
+    + '<div class="artist-header-bio" id="artist-header-bio">加载中…</div>'
+    + '<div class="artist-header-meta" id="artist-header-meta"></div>';
 
-  // 1. 加载头像
   const img = new Image();
   img.onload = function(){
     const el = document.getElementById('artist-header-avatar');
@@ -833,7 +826,6 @@ async function renderArtistHeader(){
   };
   img.src = '/api/artist/image?name=' + encodeURIComponent(name);
 
-  // 2. 加载简介
   try {
     const r = await api('/api/artist/photo?name=' + encodeURIComponent(name));
     if (_lastArtistHeaderName !== name) return;
@@ -974,7 +966,7 @@ function updateCounters(){
 }
 
 function renderSidebar(){
-  $('#nav-all').classList.toggle('active', state.mainView === 'songs' && state.view === 'all');
+  $('#nav-all').classList.toggle('active', state.mainView === 'songs' && (state.view === 'all' || state.view === 'artist'));
   $('#count-all').textContent = state.songs.length;
   try {
     if (typeof aggregateArtists === 'function'){
@@ -1029,7 +1021,13 @@ function setViewTitle(){
     $('#toolbar').style.display = '';
     $('#search-wrap').style.display = '';
     const pl = state.playlists.find(p => p.id === state.activePlaylistId);
-    $('#view-title').textContent = state.view === 'playlist' && pl ? pl.name : '全部歌曲';
+    if (state.view === 'artist' && state.filterArtist){
+      $('#view-title').textContent = '艺术家：' + state.filterArtist;
+    } else if (state.view === 'playlist' && pl){
+      $('#view-title').textContent = pl.name;
+    } else {
+      $('#view-title').textContent = '全部歌曲';
+    }
   }
 }
 
@@ -1061,9 +1059,9 @@ function saveUIState(){
   try {
     localStorage.setItem('musicon_ui', JSON.stringify({
       mainView: state.mainView,
-      view: state.view,
+      view: state.view === 'artist' ? 'all' : state.view,
       activePlaylistId: state.activePlaylistId,
-      filterArtist: state.filterArtist,
+      filterArtist: state.view === 'artist' ? state.filterArtist : null,
       filterAlbum: state.filterAlbum,
       page: state.page,
       pageSize: state.pageSize
@@ -1905,7 +1903,7 @@ $('#pl-seek').addEventListener('input', e => {
 
 $('#nav-all').addEventListener('click', selectAllView);
 if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; _lastArtistHeaderName = null; switchMainView('artists'); });
-if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; switchMainView('albums'); });
+if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; _lastArtistHeaderName = null; switchMainView('albums'); });
 
 if ($('#artists-search')) $('#artists-search').addEventListener('input', debounce(renderArtists, 150));
 if ($('#albums-search')) $('#albums-search').addEventListener('input', debounce(renderAlbums, 150));
@@ -1915,14 +1913,13 @@ if ($('#artists-body')) $('#artists-body').addEventListener('click', function(e)
   if (!card) return;
   state.filterArtist = card.dataset.artist;
   state.filterAlbum = null;
-  state.view = 'all';
+  state.view = 'artist';
   state.activePlaylistId = null;
   state.selected.clear();
   _lastArtistHeaderName = null;
   switchMainView('songs');
   renderSidebar();
   setViewTitle();
-  $('#view-title').textContent = '艺术家：' + state.filterArtist;
   applyFilter();
   saveUIState();
 });
@@ -1983,14 +1980,13 @@ $('#list-body').addEventListener('click', e => {
     if (!artist) return;
     state.filterArtist = artist;
     state.filterAlbum = null;
-    state.view = 'all';
+    state.view = 'artist';
     state.activePlaylistId = null;
     state.selected.clear();
     _lastArtistHeaderName = null;
     switchMainView('songs');
     renderSidebar();
     setViewTitle();
-    $('#view-title').textContent = '艺术家：' + artist;
     applyFilter();
     saveUIState();
     return;
@@ -2065,7 +2061,6 @@ if ($('#page-size')) $('#page-size').addEventListener('change', function(){
 if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
-// 在线搜索
 $('#btn-online-search').addEventListener('click', openOnlineModal);
 $('#online-close').addEventListener('click', closeOnlineModal);
 $('#online-search-btn').addEventListener('click', doOnlineSearch);
@@ -2198,13 +2193,16 @@ async function boot(){
     const saved = loadUIState();
     if (saved){
       if (saved.pageSize) state.pageSize = saved.pageSize;
-      if (saved.filterArtist) state.filterArtist = saved.filterArtist;
       if (saved.filterAlbum) state.filterAlbum = saved.filterAlbum;
       if (saved.view === 'playlist' && saved.activePlaylistId &&
           state.playlists.find(p => p.id === saved.activePlaylistId)){
         state.activePlaylistId = saved.activePlaylistId;
         state.view = 'playlist';
         await loadPlaylistTracks(saved.activePlaylistId);
+      } else {
+        // 上次是 artist 视图：不恢复
+        state.view = 'all';
+        state.filterArtist = null;
       }
       if (saved.pageSize && $('#page-size')) $('#page-size').value = String(saved.pageSize);
     }
