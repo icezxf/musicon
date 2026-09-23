@@ -38,10 +38,9 @@ type Song struct {
 	BPM         int    `json:"bpm"`
 }
 
-// 单表查询用，不带表别名
 const songColumns = `id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,cover_path,cover_art,lyrics,plays,track_number,disc_number,year,composer,bitrate,sample_rate,channels,file_size,isrc,bpm`
 
-// JOIN 查询用，列名带 s. 前缀，避免与 playlist_tracks.id 冲突
+// JOIN 查询专用：带 s. 前缀，避免与 playlist_tracks.id 歧义
 const songColumnsAliased = `s.id,s.title,s.artist,s.album,s.album_artist,s.genre,s.fmt,s.dur,s.path,s.provider_id,s.cover_path,s.cover_art,s.lyrics,s.plays,s.track_number,s.disc_number,s.year,s.composer,s.bitrate,s.sample_rate,s.channels,s.file_size,s.isrc,s.bpm`
 
 func scanSong(rows interface{ Scan(...any) error }) (Song, error) {
@@ -155,7 +154,7 @@ func (h *Holder) GetPlaylist(id string) (*Playlist, error) {
 	return &p, nil
 }
 
-// 修复：JOIN 时用 songColumnsAliased，避免 id 列歧义
+// 关键修复：JOIN 使用带 s. 前缀的列名，避免 id 歧义
 func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 	rows, err := h.DB.Query(`
 		SELECT `+songColumnsAliased+`
@@ -221,7 +220,7 @@ func (h *Holder) AddSongsToPlaylist(plID string, songIDs []string) error {
 		return fmt.Errorf("playlist not found")
 	}
 
-	// 用 MAX(sort_order)+1 而不是 COUNT(*)，避免删歌后冲突
+	// sort_order 用 MAX+1 而不是 COUNT，避免删歌后冲突
 	var next int
 	tx.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM playlist_tracks WHERE playlist_id=?`, plID).Scan(&next)
 	for i, sid := range songIDs {
@@ -375,7 +374,7 @@ func (h *Holder) DeleteSongs(ids []string) error {
 	}
 	defer tx.Rollback()
 
-	// 记录受影响的歌单，删完后更新它们的 song_count
+	// 记录受影响的歌单，删完后更新 song_count
 	var affected []string
 	if rows, err := tx.Query(`SELECT DISTINCT playlist_id FROM playlist_tracks WHERE song_id IN (`+ph+`)`, args...); err == nil {
 		for rows.Next() {
