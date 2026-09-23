@@ -226,6 +226,10 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	// 艺术家
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
+	case p == "/api/artist/photo" && r.Method == "GET":
+		h.artistPhoto(w, r)
+	case p == "/api/artist/refresh" && r.Method == "POST":   // ← 新增
+		h.artistRefresh(w, r)
 
 	// AList 目录树
 	case p == "/api/alist/list" && r.Method == "GET":
@@ -942,4 +946,29 @@ func toStrings(a []any) []string {
 		}
 	}
 	return out
+}
+
+// POST /api/artist/refresh
+// body: {"name":"周杰伦"}
+// 强制刷新歌手缓存
+func (h *Handler) artistRefresh(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" {
+		writeJSON(w, 400, map[string]any{"detail": "name required"})
+		return
+	}
+	d, err := h.LX.RefreshSingerDetail(body.Name)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":     true,
+		"name":   d.Name,
+		"pic":    d.Pic,
+		"source": d.Source,
+	})
 }
