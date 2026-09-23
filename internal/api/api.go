@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/disintegration/imaging"
 
@@ -328,7 +329,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// 修复：错误不再被吞掉
+// 错误不再被吞掉
 func (h *Handler) patchPlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
 	var body map[string]any
@@ -444,7 +445,7 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	client := &http.Client{Timeout: 15e9}
+	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", d.Pic, nil)
 	if err != nil {
 		http.Error(w, "bad url", 400)
@@ -476,7 +477,6 @@ func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
 	if err != nil || size <= 0 || size > 2000 {
 		size = 96
 	}
-	// 用 Base 去掉路径成分，再拒绝 "." 和 ".."
 	filename := filepath.Base(parts[1])
 	if filename == "." || filename == ".." || filename == "" {
 		http.Error(w, "bad filename", 400)
@@ -564,7 +564,7 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	lxURL := h.Settings.GetLXURL()
 	u := strings.TrimRight(lxURL, "/") + "/api/music/search?source=tx&name=" + url.QueryEscape(kw) + "&type=song"
-	client := &http.Client{Timeout: 15e9}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(u)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
@@ -585,7 +585,7 @@ func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 	}
 	lxURL := h.Settings.GetLXURL()
 	u := strings.TrimRight(lxURL, "/") + "/api/music/lyric?source=" + url.QueryEscape(source) + "&songId=" + url.QueryEscape(songID)
-	client := &http.Client{Timeout: 15e9}
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(u)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
