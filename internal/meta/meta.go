@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dhowden/tag"
+	"github.com/mewkiz/flac"
 )
 
 type Info struct {
