@@ -291,16 +291,20 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) buildArtistGroups() []map[string]any {
 	songs, _ := h.DB.ListSongs()
 
+	// artist -> set of albums
 	artistAlbums := map[string]map[string]bool{}
 	for _, s := range songs {
-		if s.Artist == "" {
+		names := splitArtists(s.Artist)
+		if len(names) == 0 {
 			continue
 		}
-		if _, ok := artistAlbums[s.Artist]; !ok {
-			artistAlbums[s.Artist] = map[string]bool{}
-		}
-		if s.Album != "" {
-			artistAlbums[s.Artist][s.Album] = true
+		for _, name := range names {
+			if _, ok := artistAlbums[name]; !ok {
+				artistAlbums[name] = map[string]bool{}
+			}
+			if s.Album != "" {
+				artistAlbums[name][s.Album] = true
+			}
 		}
 	}
 
@@ -362,6 +366,30 @@ func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// splitArtists 拆分多艺术家
+func splitArtists(s string) []string {
+	if s == "" {
+		return nil
+	}
+	// 分隔符：、,，&＆;；/ feat. ft. vs.
+	re := regexp.MustCompile(`[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*/\s*`)
+	parts := re.Split(s, -1)
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return []string{s}
+	}
+	return out
+}
+
 func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	songs, _ := h.DB.ListSongs()
@@ -375,10 +403,18 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request) {
 	albums := map[string]*albumAgg{}
 	artistName := ""
 	for _, s := range songs {
-		if artistID(s.Artist) != id {
+		names := splitArtists(s.Artist)
+		matched := false
+		for _, n := range names {
+			if artistID(n) == id {
+				artistName = n
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			continue
 		}
-		artistName = s.Artist
 		k := s.Album + "|" + s.Artist
 		if _, ok := albums[k]; !ok {
 			albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
@@ -1122,28 +1158,42 @@ func songToMap(s *db.Song) map[string]any {
 		coverArt = aID
 	}
 
+	// 拆多个艺术家 → OpenSubsonic artists 数组
+	var artists []map[string]any
+	for _, name := range splitArtists(s.Artist) {
+		artists = append(artists, map[string]any{
+			"@id":   artistID(name),
+			"@name": name,
+		})
+	}
+
 	return map[string]any{
-		"@id":          s.ID,
-		"@parent":      aID,
-		"@isDir":       false,
-		"@title":       s.Title,
-		"@album":       s.Album,
-		"@artist":      s.Artist,
-		"@track":       0,
-		"@year":        0,
-		"@genre":       s.Genre,
-		"@coverArt":    coverArt,
-		"@size":        0,
-		"@contentType": ct,
-		"@suffix":      strings.ToLower(s.Fmt),
-		"@duration":    s.Dur,
-		"@bitRate":     0,
-		"@path":        s.Path,
-		"@albumId":     aID,
-		"@artistId":    arID,
-		"@type":        "music",
-		"@created":     "2024-01-01T00:00:00.000Z",
-		"@isVideo":     false,
+		"@id":                  s.ID,
+		"@parent":              aID,
+		"@isDir":               false,
+		"@title":               s.Title,
+		"@album":               s.Album,
+		"@artist":              s.Artist,
+		"@albumArtist":         s.AlbumArtist,
+		"@displayArtist":       s.Artist,
+		"@displayAlbumArtist":  s.AlbumArtist,
+		"@track":               0,
+		"@discNumber":          1,
+		"@year":                0,
+		"@genre":               s.Genre,
+		"@coverArt":            coverArt,
+		"@size":                0,
+		"@contentType":         ct,
+		"@suffix":              strings.ToLower(s.Fmt),
+		"@duration":            s.Dur,
+		"@bitRate":             0,
+		"@path":                s.Path,
+		"@albumId":             aID,
+		"@artistId":            arID,
+		"@type":                "music",
+		"@created":             "2024-01-01T00:00:00.000Z",
+		"@isVideo":             false,
+		"artists":              artists, // OpenSubsonic 扩展
 	}
 }
 
