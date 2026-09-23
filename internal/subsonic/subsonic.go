@@ -14,11 +14,14 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/disintegration/imaging"
 
@@ -130,14 +133,16 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 			"artist": []any{}, "album": []any{}, "song": []any{},
 		}})
 	case "getUser":
+		var role string
+		h.DB.DB.QueryRow(`SELECT role FROM subsonic_users WHERE username=?`, u).Scan(&role)
 		h.writeOK(w, r, map[string]any{"user": map[string]any{
-			"@username": u, "@adminRole": true, "@scrobblingEnabled": true,
+			"@username": u, "@adminRole": role == "admin", "@scrobblingEnabled": true,
 		}})
 	case "getScanStatus":
-		h.writeOK(w, r, map[string]any{"scanStatus": map[string]any{"@scanning": false, "@count": 0}})
+		h.getScanStatus(w, r)
 	default:
 		log.Printf("[subsonic] unimplemented: %s", p)
-		h.writeErr(w, r, 70, "not implemented: "+p)
+		h.writeErr(w, r, 0, "not implemented: "+p)
 	}
 }
 
@@ -164,7 +169,8 @@ func (h *Handler) writeResp(w http.ResponseWriter, r *http.Request, status strin
 		"@serverVersion": "0.1.0",
 		"@openSubsonic":  true,
 	}
-	if code != 0 {
+	// 只要 msg 非空就写 error 元素，code=0 也是合法错误码
+	if msg != "" {
 		resp["error"] = map[string]any{"@code": code, "@message": msg}
 	}
 	for k, v := range body {
@@ -296,12 +302,14 @@ func escapeXML(s string) string {
 
 // ==================== splitArtists ====================
 
+// 包级正则，避免每次调用重新编译
+var splitArtistRe = regexp.MustCompile(`[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*/\s*`)
+
 func splitArtists(s string) []string {
 	if s == "" {
 		return nil
 	}
-	re := regexp.MustCompile(`[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*/\s*`)
-	parts := re.Split(s, -1)
+	parts := splitArtistRe.Split(s, -1)
 	var out []string
 	seen := map[string]bool{}
 	for _, p := range parts {
@@ -633,7 +641,8 @@ func (h *Handler) getRandomSongs(w http.ResponseWriter, r *http.Request) {
 		songs = filtered
 	}
 	rand.Shuffle(len(songs), func(i, j int) { songs[i], songs[j] = songs[j], songs[i] })
-	size := 50
+	// 规范默认 10
+	size := 10
 	if v := r.URL.Query().Get("size"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			size = n
@@ -660,9 +669,8 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	songs, _ := h.DB.ListSongs()
-	var out []map[string]any
-	for i := range songs {
-		s := &songs[i]
+	var filtered []db.Song
+	for _, s := range songs {
 		if artist != "" {
 			names := splitArtists(s.Artist)
 			found := false
@@ -676,10 +684,16 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		out = append(out, songToMap(s))
-		if len(out) >= count {
-			break
-		}
+		filtered = append(filtered, s)
+	}
+	// 按播放次数降序
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].Plays > filtered[j].Plays })
+	if len(filtered) > count {
+		filtered = filtered[:count]
+	}
+	var out []map[string]any
+	for i := range filtered {
+		out = append(out, songToMap(&filtered[i]))
 	}
 	h.writeOK(w, r, map[string]any{
 		"topSongs": map[string]any{"song": out},
@@ -696,16 +710,18 @@ func (h *Handler) getSimilarSongs(w http.ResponseWriter, r *http.Request, key st
 			break
 		}
 	}
+	seen := map[string]bool{id: true}
 	var out []map[string]any
 	if base != nil {
 		for i := range songs {
 			s := &songs[i]
-			if s.ID == base.ID {
+			if seen[s.ID] {
 				continue
 			}
 			sameAlbum := s.Album != "" && s.Album == base.Album
 			sameArtist := s.Artist != "" && s.Artist == base.Artist
 			if sameAlbum || sameArtist {
+				seen[s.ID] = true
 				out = append(out, songToMap(s))
 				if len(out) >= 20 {
 					break
@@ -716,6 +732,10 @@ func (h *Handler) getSimilarSongs(w http.ResponseWriter, r *http.Request, key st
 	if len(out) < 20 {
 		rand.Shuffle(len(songs), func(i, j int) { songs[i], songs[j] = songs[j], songs[i] })
 		for i := range songs {
+			if seen[songs[i].ID] {
+				continue
+			}
+			seen[songs[i].ID] = true
 			out = append(out, songToMap(&songs[i]))
 			if len(out) >= 20 {
 				break
@@ -743,6 +763,10 @@ func (h *Handler) getGenres(w http.ResponseWriter, r *http.Request) {
 			"#text":       g,
 		})
 	}
+	// 按名称排序，输出稳定
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["#text"].(string) < out[j]["#text"].(string)
+	})
 	h.writeOK(w, r, map[string]any{
 		"genres": map[string]any{"genre": out},
 	})
@@ -757,17 +781,21 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, 70, "Song not found")
 		return
 	}
-	url, err := h.AList.GetRawURL(s.Path)
+	rawURL, err := h.AList.GetRawURL(s.Path)
 	if err != nil {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
-	clip := url
-	if len(clip) > 120 {
-		clip = clip[:120]
+	// 日志只打 host+path，避免泄漏签名
+	if u, err := url.Parse(rawURL); err == nil {
+		log.Printf("[stream] %s %s -> 302 %s%s", r.Method, id, u.Host, u.Path)
+	} else {
+		log.Printf("[stream] %s %s -> 302", r.Method, id)
 	}
-	log.Printf("[stream] %s %s -> 302 %s", r.Method, id, clip)
-	http.Redirect(w, r, url, http.StatusFound)
+	// 防止客户端缓存 302 响应本身
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
 // ==================== 封面 ====================
@@ -782,7 +810,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 			size = n
 		}
 	}
-	log.Printf("[getCoverArt] id=%s type=%s size=%d", id, typ, size)
 
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
@@ -799,7 +826,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 
 	coverPath := h.findCoverPath(id, typ)
 	if coverPath == "" {
-		log.Printf("[getCoverArt] id=%s 无封面", id)
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -807,7 +833,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		h.serveThumb(w, r, coverPath, size)
 		return
 	}
-	log.Printf("[getCoverArt] ✓ 返回 %s", coverPath)
 	serveLocalCover(w, r, coverPath)
 }
 
@@ -842,7 +867,8 @@ func (h *Handler) findCoverPath(id, typ string) string {
 }
 
 func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
-	thumbDir := "/app/data/covers_thumb"
+	// 用 Cfg.DataDir 而不是硬编码 /app/data
+	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
 	base := path
 	if i := strings.LastIndex(base, "/"); i >= 0 {
@@ -899,8 +925,13 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 }
 
 func proxyImage(w http.ResponseWriter, url string) {
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
+	// 加超时和大小限制
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		http.Error(w, "bad url", 400)
+		return
+	}
 	req.Header.Set("Referer", "https://y.qq.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
@@ -911,7 +942,7 @@ func proxyImage(w http.ResponseWriter, url string) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	io.Copy(w, resp.Body)
+	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
 }
 
 // ==================== 歌单 ====================
@@ -971,6 +1002,10 @@ func (h *Handler) updatePlaylist(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = r.URL.Query().Get("playlistId")
 	}
+	if _, err := h.DB.GetPlaylist(id); err != nil {
+		h.writeErr(w, r, 70, "Playlist not found")
+		return
+	}
 	if r.Form != nil {
 		if add := r.Form["songIdToAdd"]; len(add) > 0 {
 			h.DB.AddSongsToPlaylist(id, add)
@@ -1014,10 +1049,8 @@ func (h *Handler) getLyricsLegacy(w http.ResponseWriter, r *http.Request) {
 			s := &songs[i]
 			a := strings.ToLower(strings.TrimSpace(s.Artist))
 			t := strings.ToLower(strings.TrimSpace(s.Title))
-			matchArtist := wantArtist == "" || a == wantArtist ||
-				strings.Contains(a, wantArtist) || strings.Contains(wantArtist, a)
-			matchTitle := wantTitle == "" || t == wantTitle ||
-				strings.Contains(t, wantTitle) || strings.Contains(wantTitle, t)
+			matchArtist := wantArtist == "" || a == wantArtist
+			matchTitle := wantTitle == "" || t == wantTitle
 			if matchArtist && matchTitle {
 				song = s
 				break
@@ -1042,7 +1075,6 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	s, err := h.DB.GetSong(id)
 	if err != nil || s.Lyrics == "" {
-		log.Printf("[getLyricsBySongId] id=%s 无歌词", id)
 		h.writeOK(w, r, map[string]any{"lyricsList": map[string]any{"structuredLyrics": []any{}}})
 		return
 	}
@@ -1062,7 +1094,6 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonLines = append(jsonLines, m)
 	}
-	log.Printf("[getLyricsBySongId] id=%s lines=%d synced=%v", id, len(jsonLines), hasTimestamp)
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
@@ -1084,6 +1115,12 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, key stri
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
+	}
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		host = fh
+	}
+	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
+		scheme = fp
 	}
 	name := h.resolveArtistName(id)
 	bio := ""
@@ -1110,17 +1147,43 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, key stri
 	})
 }
 
+// artistResolver 缓存 artistID -> name 映射
+var artistResolver = struct {
+	mu      sync.RWMutex
+	cache   map[string]string
+	builtAt time.Time
+}{}
+
 func (h *Handler) resolveArtistName(id string) string {
 	if id == "" {
 		return ""
 	}
+	ar := &artistResolver
+	ar.mu.RLock()
+	if time.Since(ar.builtAt) < time.Minute && ar.cache != nil {
+		v := ar.cache[id]
+		ar.mu.RUnlock()
+		if v != "" {
+			return v
+		}
+		return id
+	}
+	ar.mu.RUnlock()
+
 	songs, _ := h.DB.ListSongs()
+	newCache := map[string]string{}
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
-			if artistID(name) == id || name == id {
-				return name
-			}
+			newCache[artistID(name)] = name
+			newCache[name] = name
 		}
+	}
+	ar.mu.Lock()
+	ar.cache = newCache
+	ar.builtAt = time.Now()
+	ar.mu.Unlock()
+	if v, ok := newCache[id]; ok {
+		return v
 	}
 	return id
 }
@@ -1139,7 +1202,8 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) scrobble(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	sub := r.URL.Query().Get("submission") == "true"
+	// 规范默认 submission=true，只有显式 false 才不记录
+	sub := r.URL.Query().Get("submission") != "false"
 	if sub && id != "" {
 		h.DB.RecordPlay(id, "subsonic", r.URL.Query().Get("c"))
 	}
@@ -1209,6 +1273,26 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, key string) {
 			"song":   matchedSongs,
 		},
 	})
+}
+
+// ==================== 扫描状态 ====================
+
+func (h *Handler) getScanStatus(w http.ResponseWriter, r *http.Request) {
+	tasks, _ := h.DB.ListScanTasks(1)
+	if len(tasks) > 0 {
+		t := tasks[0]
+		st, _ := t["status"].(string)
+		scanning := st == "running" || st == "pending"
+		var count int
+		if n, ok := t["processed"].(int); ok {
+			count = n
+		}
+		h.writeOK(w, r, map[string]any{
+			"scanStatus": map[string]any{"@scanning": scanning, "@count": count},
+		})
+		return
+	}
+	h.writeOK(w, r, map[string]any{"scanStatus": map[string]any{"@scanning": false, "@count": 0}})
 }
 
 // ==================== 辅助 ====================
