@@ -799,11 +799,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
-	if u, err := url.Parse(rawURL); err == nil {
-		log.Printf("[stream] %s %s -> 302 %s%s", r.Method, id, u.Host, u.Path)
-	} else {
-		log.Printf("[stream] %s %s -> 302", r.Method, id)
-	}
+	log.Printf("[stream] %s %s -> 302 %s", r.Method, id, rawURL)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	http.Redirect(w, r, rawURL, http.StatusFound)
