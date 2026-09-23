@@ -15,8 +15,6 @@ import (
 	"github.com/disintegration/imaging"
 )
 
-// GET /api/covers/thumb/{size}/{filename}
-// 真实缩放并缓存
 func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/covers/thumb/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -28,9 +26,12 @@ func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
 	if err != nil || size <= 0 || size > 2000 {
 		size = 96
 	}
-	filename := parts[1]
-
-	// 安全校验
+	// 关键修复：用 filepath.Base 去掉任何路径成分，再额外拒绝 "." 和 ".."
+	filename := filepath.Base(parts[1])
+	if filename == "." || filename == ".." || filename == "" {
+		http.Error(w, "bad filename", 400)
+		return
+	}
 	for _, c := range filename {
 		if !(c == '.' || c == '-' || c == '_' ||
 			(c >= '0' && c <= '9') ||
@@ -47,14 +48,12 @@ func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 缩略图缓存
 	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
 	ext := filepath.Ext(filename)
 	base := strings.TrimSuffix(filename, ext)
 	thumbPath := filepath.Join(thumbDir, fmt.Sprintf("%s_%d.jpg", base, size))
 
-	// 命中缓存（且比原图新）
 	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
 		http.ServeFile(w, r, thumbPath)
 		return
@@ -69,7 +68,6 @@ func (h *Handler) coverThumb(w http.ResponseWriter, r *http.Request) {
 
 	src, _, err := image.Decode(f)
 	if err != nil {
-		// 解码失败，退回原文件
 		http.ServeFile(w, r, srcPath)
 		return
 	}
