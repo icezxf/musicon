@@ -681,7 +681,7 @@ function isVirtual(s){
 function currentList(){ return state.view === 'playlist' ? state.playlistTracks : state.songs; }
 
 function matchesFilter(s){
-  if (state.filterArtist && splitArtists(s.artist).indexOf(state.filterArtist) === -1) return false;
+  if (state.filterArtist && splitArtists(combinedArtist(s)).indexOf(state.filterArtist) === -1) return false;
   if (state.filterAlbum && (s.album || '') !== state.filterAlbum) return false;
   const isV = (s.fmt === 'VIRTUAL') || String(s.id || '').startsWith('lxv-');
   const prov = $('#f-provider') ? $('#f-provider').value : '';
@@ -736,7 +736,7 @@ function render(){
       +   '<svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>'
       + '</button></div>'
       + '<div class="col-title"><div class="col-title-text">' + esc(s.title || '(无标题)') + '</div></div>'
-      + '<div class="col-artist">' + esc(s.artist || '') + '</div>'
+      + '<div class="col-artist">' + esc(combinedArtist(s)) + '</div>'
       + '<div class="col-album">' + esc(s.album || '') + '</div>'
       + '<div class="col-dur">' + fmtDuration(s.dur) + '</div>'
       + '<div class="col-prov ' + (pv ? 'virtual' : '') + '">' + esc(prov || '—') + '</div>'
@@ -1002,10 +1002,31 @@ function splitArtists(str){
     .filter(function(x){ return x; });
 }
 
+// 拆分多艺术家
+function splitArtists(str){
+  return String(str || '')
+    .split(/[、,，;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
+    .map(function(x){ return x.trim(); })
+    .filter(function(x){ return x; });
+}
+
+// 合并 artist + album_artist
+function combinedArtist(s){
+  const a = (s.artist || '').trim();
+  const aa = (s.album_artist || '').trim();
+  if (!aa || aa === a) return a;
+  const lower = aa.toLowerCase();
+  if (lower === 'various artists' || lower === 'va' || lower === '群星') return a;
+  for (const x of splitArtists(a)) {
+    if (x.toLowerCase() === lower) return a;
+  }
+  return a ? a + '、' + aa : aa;
+}
+
 function aggregateArtists(){
   const map = new Map();
   state.songs.forEach(function(s){
-    let names = splitArtists(s.artist);
+    let names = splitArtists(combinedArtist(s));
     if (!names.length) names = ['未知艺术家'];
     names.forEach(function(name){
       if (!map.has(name)) map.set(name, { name: name, count: 0, sample: s });
