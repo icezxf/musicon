@@ -273,3 +273,40 @@ func (h *Holder) ListScanTasks(limit int) ([]map[string]any, error) {
 func newShortID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
+
+func (h *Holder) UpdateSong(id string, fields map[string]string) error {
+	allowed := map[string]bool{
+		"title": true, "artist": true, "album": true, "album_artist": true,
+		"genre": true, "lyrics": true, "cover_art": true, "composer": true,
+	}
+	var sets []string
+	args := []any{}
+	for k, v := range fields {
+		if !allowed[k] {
+			continue
+		}
+		sets = append(sets, k+"=?")
+		args = append(args, v)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, id)
+	_, err := h.DB.Exec("UPDATE songs SET "+strings.Join(sets, ", ")+", updated_at=CURRENT_TIMESTAMP WHERE id=?", args...)
+	return err
+}
+
+func (h *Holder) DeleteSongs(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	h.DB.Exec("DELETE FROM playlist_tracks WHERE song_id IN ("+ph+")", args...)
+	_, err := h.DB.Exec("DELETE FROM songs WHERE id IN ("+ph+")", args...)
+	return err
+}
