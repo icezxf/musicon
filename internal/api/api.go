@@ -44,15 +44,12 @@ func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	// 公开接口
 	mux.HandleFunc("/api/web-auth/login", h.login)
 	mux.HandleFunc("/api/web-auth/logout", h.logout)
 	mux.HandleFunc("/api/web-auth/session", h.session)
 	mux.HandleFunc("/api/artist/image", h.artistImage)
 	mux.HandleFunc("/api/covers/thumb/", h.coverThumb)
 	mux.HandleFunc("GET /api/songs/{id}/stream", h.songStream)
-
-	// 需要会话
 	mux.HandleFunc("/api/", h.authWrap(h.handle))
 }
 
@@ -79,6 +76,22 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "Song not found"})
 		return
 	}
+
+	// 虚拟歌曲（LX 在线歌曲）：尝试走 LX 拿真实 URL
+	if s.Fmt == "VIRTUAL" || strings.HasPrefix(s.ID, "lxv-") {
+		u, err := h.lxPlayURL(s)
+		if err != nil {
+			writeJSON(w, 501, map[string]any{
+				"detail": "在线歌曲播放需要 lxserver 配置自定义音源：" + err.Error(),
+			})
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, u, http.StatusFound)
+		return
+	}
+
+	// 本地/网盘歌曲：走 AList
 	u, err := h.AList.GetRawURL(s.Path)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
@@ -86,6 +99,33 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, u, http.StatusFound)
+}
+
+// lxPlayURL 尝试通过 lxserver 解析虚拟歌曲的真实播放地址
+func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
+	// 从 ID 反解 source 和 songmid
+	// ID 格式：lxv-{source}-{songmid}
+	rest := strings.TrimPrefix(s.ID, "lxv-")
+	parts := strings.SplitN(rest, "-", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid virtual id")
+	}
+	source, midStr := parts[0], parts[1]
+
+	// songmid 尽量用数字，lxserver 对 wy/tx 要数字
+	var mid any = midStr
+	if n, err := strconv.ParseInt(midStr, 10, 64); err == nil {
+		mid = n
+	}
+
+	songInfo := map[string]any{
+		"source":  source,
+		"songmid": mid,
+		"name":    s.Title,
+		"singer":  s.Artist,
+		"albumName": s.Album,
+	}
+	return h.LX.GetSongURL(songInfo, "320k")
 }
 
 // ---------- 认证 ----------
@@ -191,13 +231,15 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
-	// LX 搜索 / 歌词 / 播放地址
+	// LX 搜索 / 歌词 / 播放地址 / 导入库
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
 		h.metadataLyric(w, r)
 	case p == "/api/music/play-url" && r.Method == "POST":
 		h.musicPlayURL(w, r)
+	case p == "/api/music/import" && r.Method == "POST":
+		h.musicImport(w, r)
 
 	// 任务
 	case p == "/api/tasks" && r.Method == "GET":
@@ -555,7 +597,7 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- LX 搜索 / 歌词 / 播放地址 ----------
+// ---------- LX 搜索 / 歌词 / 播放地址 / 导入库 ----------
 
 // GET /api/music/metadata-search?keyword=xxx&source=wy&page=1&limit=30
 func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
@@ -577,7 +619,6 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 把每首歌的 Raw 也序列化出去，前端再传回来给 play-url
 	type songOut struct {
 		ID       string         `json:"id"`
 		Name     string         `json:"name"`
@@ -586,7 +627,7 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 		Source   string         `json:"source"`
 		Duration int            `json:"duration"`
 		Cover    string         `json:"cover"`
-		Raw      map[string]any `json:"raw"` // 完整字段，play-url 时回传
+		Raw      map[string]any `json:"raw"`
 	}
 	out := make([]songOut, 0, len(songs))
 	for _, s := range songs {
@@ -630,8 +671,6 @@ func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/music/play-url
-// body: {"songInfo": {...}, "quality": "320k"}
-// songInfo 应为搜索结果里的 raw 字段
 func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SongInfo map[string]any `json:"songInfo"`
@@ -650,6 +689,34 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"url": u})
 }
 
+// POST /api/music/import
+// body: {"songs": [{raw 对象}, ...]}
+// 把 LX 搜索结果作为虚拟歌曲导入库
+func (h *Handler) musicImport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Songs []map[string]any `json:"songs"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if len(body.Songs) == 0 {
+		writeJSON(w, 400, map[string]any{"detail": "songs required"})
+		return
+	}
+	imported, skipped := 0, 0
+	for _, raw := range body.Songs {
+		song := lxToSong(raw)
+		if song == nil {
+			skipped++
+			continue
+		}
+		if err := h.DB.UpsertSong(*song); err != nil {
+			skipped++
+			continue
+		}
+		imported++
+	}
+	writeJSON(w, 200, map[string]any{"imported": imported, "skipped": skipped})
+}
+
 // GET /api/lx/status —— 探测 LX 是否可达
 func (h *Handler) lxStatus(w http.ResponseWriter, r *http.Request) {
 	url := h.Settings.GetLXURL()
@@ -661,6 +728,101 @@ func (h *Handler) lxStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Body.Close()
 	writeJSON(w, 200, map[string]any{"running": resp.StatusCode == 200, "url": url, "status": resp.StatusCode})
+}
+
+// ---------- LX → db.Song 转换 ----------
+
+// lxToSong 把 LX 搜索结果的原始对象转换成 db.Song
+func lxToSong(raw map[string]any) *db.Song {
+	source, _ := raw["source"].(string)
+	if source == "" {
+		return nil
+	}
+	mid := lxMidOf(raw)
+	if mid == "" {
+		return nil
+	}
+	id := "lxv-" + source + "-" + mid
+
+	name := strOf(raw, "name", "title")
+	singer := strOf(raw, "singer", "artist")
+	album := strOf(raw, "albumName", "album")
+	cover := strOf(raw, "img", "cover", "pic", "albumPic")
+
+	dur := 0
+	if v := strOf(raw, "interval", "duration"); v != "" {
+		dur = parseDur(v)
+	}
+
+	return &db.Song{
+		ID:         id,
+		Title:      name,
+		Artist:     singer,
+		Album:      album,
+		Fmt:        "VIRTUAL",
+		Dur:        dur,
+		ProviderID: "lx-" + source,
+		CoverArt:   cover,
+	}
+}
+
+// lxMidOf 从 LX 搜索结果里取唯一 ID
+func lxMidOf(raw map[string]any) string {
+	for _, k := range []string{"songmid", "songId", "id", "mid", "hash"} {
+		if v, ok := raw[k]; ok {
+			switch x := v.(type) {
+			case string:
+				if x != "" {
+					return x
+				}
+			case float64:
+				return strconv.FormatInt(int64(x), 10)
+			case int64:
+				return strconv.FormatInt(x, 10)
+			case int:
+				return strconv.Itoa(x)
+			}
+		}
+	}
+	return ""
+}
+
+func strOf(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func parseDur(s string) int {
+	if s == "" {
+		return 0
+	}
+	if strings.Contains(s, ":") {
+		parts := strings.Split(s, ":")
+		if len(parts) == 2 {
+			m, _ := strconv.Atoi(parts[0])
+			sec, _ := strconv.Atoi(parts[1])
+			return m*60 + sec
+		}
+		if len(parts) == 3 {
+			h, _ := strconv.Atoi(parts[0])
+			m, _ := strconv.Atoi(parts[1])
+			sec, _ := strconv.Atoi(parts[2])
+			return h*3600 + m*60 + sec
+		}
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		if n > 10000 {
+			return n / 1000
+		}
+		return n
+	}
+	return 0
 }
 
 // ---------- 任务 ----------
