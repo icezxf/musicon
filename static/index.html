@@ -24,8 +24,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:5px;border:2px solid transparent;background-clip:padding-box}
 ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.12);background-clip:padding-box}
 .app{display:grid;grid-template-columns:260px 1fr;height:100vh;overflow:hidden}
-
-/* 侧栏 */
 .sidebar{background:var(--bg-1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
 .brand{display:flex;align-items:center;gap:10px;padding:20px 18px 16px;border-bottom:1px solid var(--border)}
 .brand-logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#a855f7);
@@ -35,7 +33,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   border-radius:var(--r-sm);color:var(--text-2);transition:all .15s;flex-shrink:0}
 .icon-btn:hover{background:var(--bg-2);color:var(--text)}
 .icon-btn svg{width:16px;height:16px}
-
 .nav-section{padding:14px 10px}
 .nav-section + .nav-section{border-top:1px solid var(--border);padding-top:16px}
 .nav-title{font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;
@@ -52,8 +49,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .nav-item.ro .nav-label::after{content:"只读";font-size:10px;color:var(--warn);margin-left:6px;
   padding:1px 5px;border-radius:3px;background:rgba(245,158,11,0.12);vertical-align:middle}
 .nav-playlists{flex:1;overflow-y:auto;padding-bottom:20px}
-
-/* 主区 */
 .main{display:flex;flex-direction:column;min-width:0;background:var(--bg);position:relative;height:100vh;overflow:hidden}
 .topbar{padding:20px 28px 14px;display:flex;align-items:center;gap:16px;
   border-bottom:1px solid var(--border);flex-shrink:0}
@@ -73,7 +68,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ba3b0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   background-repeat:no-repeat;background-position:right 10px center;transition:border-color .15s}
 .select:hover{border-color:var(--border-2)}
-
 .toolbar{padding:12px 28px;display:flex;align-items:center;gap:12px;
   border-bottom:1px solid var(--border);flex-shrink:0}
 .sel-info{font-size:13px;color:var(--text-2)}
@@ -91,7 +85,10 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .btn-danger{padding:9px 18px;border-radius:var(--r-sm);background:var(--danger);
   color:#fff;font-weight:500;font-size:13.5px;transition:all .12s}
 .btn-danger:hover{background:var(--danger-h)}
-
+.artist-link{color:inherit;text-decoration:none;transition:color .12s;cursor:pointer}
+.artist-link:hover{color:var(--accent-h);text-decoration:underline}
+.btn-ghost.danger{color:var(--danger)}
+.btn-ghost.danger:hover{background:rgba(239,68,68,.12);color:var(--danger-h)}
 .list-wrap{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 28px 100px}
 .pager{display:flex;align-items:center;gap:4px}
 .pager button{min-width:30px;height:28px;padding:0 8px;border-radius:6px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);font-size:12px;transition:all .12s;cursor:pointer}
@@ -144,14 +141,12 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   background:var(--bg-2);border-radius:11px;font-size:11px;color:var(--text-3);
   max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .col-prov.virtual{color:var(--warn);background:rgba(245,158,11,0.1)}
-
 .empty{padding:80px 20px;text-align:center;color:var(--text-3)}
 .empty-icon{width:60px;height:60px;margin:0 auto 16px;border-radius:20px;
   background:var(--bg-2);display:flex;align-items:center;justify-content:center}
 .empty-icon svg{width:26px;height:26px;color:var(--text-3);opacity:.6}
 .empty-title{font-size:15px;color:var(--text-2);font-weight:500;margin-bottom:6px}
 .empty-sub{font-size:13px}
-
 .actionbar{position:absolute;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);
   display:flex;align-items:center;gap:16px;background:var(--bg-2);
   border:1px solid var(--border-2);border-radius:var(--r-lg);
@@ -162,7 +157,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .actionbar-info{font-size:13px;color:var(--text-2);white-space:nowrap}
 .actionbar-info b{color:var(--accent-h);font-weight:600}
 .actionbar-btns{display:flex;gap:8px}
-
 .player{position:absolute;bottom:0;left:0;right:0;background:var(--bg-1);
   border-top:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;
   gap:16px;transform:translateY(100%);transition:transform .24s;z-index:15}
@@ -186,7 +180,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   appearance:none;width:12px;height:12px;border-radius:50%;background:var(--accent);
   cursor:pointer;transition:transform .12s}
 .player-progress input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
-
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);
   background:var(--bg-3);border:1px solid var(--border-2);border-radius:var(--r);
   padding:12px 20px;font-size:13.5px;box-shadow:0 8px 24px rgba(0,0,0,.5);
@@ -198,12 +191,10 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .toast svg{width:16px;height:16px;flex-shrink:0}
 .toast.ok svg{color:var(--success)}
 .toast.err svg{color:var(--danger)}
-
 .skeleton{padding:20px}
 .sk-row{height:56px;background:linear-gradient(90deg,var(--bg-1) 0%,var(--bg-2) 50%,var(--bg-1) 100%);
   background-size:200% 100%;border-radius:var(--r-sm);margin-bottom:8px;animation:shimmer 1.4s infinite}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
-
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;padding:8px 0}
 .gcard{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:14px;cursor:pointer;transition:all .15s;user-select:none}
 .gcard:hover{background:var(--bg-2);border-color:var(--accent);transform:translateY(-2px)}
@@ -229,7 +220,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
 .modal .input:focus,.modal .select:focus{border-color:var(--accent)}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
-
 @media (max-width:900px){
   .app{grid-template-columns:1fr}
   .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:50;
@@ -242,13 +232,10 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .list-wrap{padding:0 16px 100px}
   .topbar-title{display:none}
 }
-
 .card .input,.card .select{width:100%;height:36px;padding:0 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:13px}
 .card .input:focus,.card .select:focus{border-color:var(--accent)}
 .card .lbl{font-size:11px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
 .provider-card label{display:block}
-
-/* ============ 移动端适配 v2 ============ */
 @media (max-width: 768px){
   .sidebar{width:280px;box-shadow:4px 0 24px rgba(0,0,0,.5)}
   .brand{padding:16px 14px 12px}
@@ -331,8 +318,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
   #view-artists, #view-albums{overflow-y:auto}
 }
-
-/* ============ 扫描目录浏览器 ============ */
 .scan-dir-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;cursor:pointer;transition:background .1s}
 .scan-dir-item:hover{background:rgba(255,255,255,.05)}
 .scan-dir-item svg{flex-shrink:0;color:var(--accent)}
@@ -430,6 +415,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <button class="btn-ghost" id="btn-all">全选</button>
         <button class="btn-ghost" id="btn-invert">反选</button>
         <button class="btn-ghost" id="btn-clear">清空</button>
+        <button class="btn-ghost danger" id="btn-delete">删除</button>
       </div>
     </div>
 
@@ -514,7 +500,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </main>
 </div>
 
-<!-- 新建歌单弹窗 -->
 <div class="modal-bg" id="pl-modal">
   <div class="modal">
     <div class="modal-title">新建歌单</div>
@@ -537,7 +522,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
-<!-- 新建扫描弹窗（目录浏览器） -->
 <div class="modal-bg" id="scan-modal">
   <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
@@ -700,7 +684,33 @@ function matchesFilter(s){
   return true;
 }
 
-/* ---------- 渲染 ---------- */
+function splitArtists(str){
+  return String(str || '')
+    .split(/[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
+    .map(function(x){ return x.trim(); })
+    .filter(function(x){ return x; });
+}
+
+function combinedArtist(s){
+  const a = (s.artist || '').trim();
+  const aa = (s.album_artist || '').trim();
+  if (!aa || aa === a) return a;
+  const lower = aa.toLowerCase();
+  if (lower === 'various artists' || lower === 'va' || lower === '群星') return a;
+  for (const x of splitArtists(a)) {
+    if (x.toLowerCase() === lower) return a;
+  }
+  return a ? a + '、' + aa : aa;
+}
+
+function renderArtistLinks(s){
+  const names = splitArtists(combinedArtist(s));
+  if (!names.length) return '';
+  return names.map(function(a){
+    return '<a class="artist-link" data-artist="' + esc(a) + '" href="javascript:void(0)">' + esc(a) + '</a>';
+  }).join('、');
+}
+
 function render(){
   if (state.mainView !== 'songs') return;
   const all = state.filtered;
@@ -736,7 +746,7 @@ function render(){
       +   '<svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>'
       + '</button></div>'
       + '<div class="col-title"><div class="col-title-text">' + esc(s.title || '(无标题)') + '</div></div>'
-      + '<div class="col-artist">' + esc(combinedArtist(s)) + '</div>'
+      + '<div class="col-artist">' + renderArtistLinks(s) + '</div>'
       + '<div class="col-album">' + esc(s.album || '') + '</div>'
       + '<div class="col-dur">' + fmtDuration(s.dur) + '</div>'
       + '<div class="col-prov ' + (pv ? 'virtual' : '') + '">' + esc(prov || '—') + '</div>'
@@ -792,12 +802,11 @@ function updateCounters(){
   const cntTot = document.getElementById('cnt-total');
   const abCnt = document.getElementById('ab-cnt');
   if (cntSel) cntSel.textContent = n;
-  if (cntTot) cntTot.textContent = currentList().length;
+  if (cntTot) cntTot.textContent = state.filtered.length;
   if (abCnt) abCnt.textContent = n;
   const ab = document.getElementById('actionbar');
   if (ab) ab.classList.toggle('show', n > 0 && state.mainView === 'songs');
 
-  // 更新歌单下拉
   const sel = document.getElementById('ab-playlist-select');
   if (sel) {
     const prevVal = sel.value;
@@ -821,7 +830,6 @@ function updateCounters(){
   if (btnRm) btnRm.style.display = inPl && !ro ? '' : 'none';
   if (btnAdd) btnAdd.style.display = '';
 
-  // 顶部"+ 添加歌曲"按钮：只在进入某个非只读歌单时显示
   const btnAddSongs = document.getElementById('btn-add-songs-to-playlist');
   if (btnAddSongs) {
     btnAddSongs.style.display = inPl && !ro ? '' : 'none';
@@ -995,34 +1003,6 @@ function selectAllView(){
   saveUIState();
 }
 
-function splitArtists(str){
-  return String(str || '')
-    .split(/[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
-    .map(function(x){ return x.trim(); })
-    .filter(function(x){ return x; });
-}
-
-// 拆分多艺术家
-function splitArtists(str){
-  return String(str || '')
-    .split(/[、,，;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
-    .map(function(x){ return x.trim(); })
-    .filter(function(x){ return x; });
-}
-
-// 合并 artist + album_artist
-function combinedArtist(s){
-  const a = (s.artist || '').trim();
-  const aa = (s.album_artist || '').trim();
-  if (!aa || aa === a) return a;
-  const lower = aa.toLowerCase();
-  if (lower === 'various artists' || lower === 'va' || lower === '群星') return a;
-  for (const x of splitArtists(a)) {
-    if (x.toLowerCase() === lower) return a;
-  }
-  return a ? a + '、' + aa : aa;
-}
-
 function aggregateArtists(){
   const map = new Map();
   state.songs.forEach(function(s){
@@ -1138,7 +1118,6 @@ function renderAlbums(){
   }).join('') + '</div>';
 }
 
-/* ---------- 任务中心 ---------- */
 async function loadTasks(){
   const box = $('#tasks-body');
   try {
@@ -1172,7 +1151,6 @@ async function loadTasks(){
         + '</div></div>';
     }).join('') + '</div>';
 
-    // 绑定"重新扫描"
     box.querySelectorAll('.btn-rescan').forEach(function(btn){
       btn.addEventListener('click', async function(){
         const path = this.dataset.path;
@@ -1190,7 +1168,6 @@ async function loadTasks(){
   }
 }
 
-/* ---------- 扫描目录浏览器 ---------- */
 let scanCurPath = '/';
 
 async function scanLoadDir(path) {
@@ -1220,7 +1197,6 @@ async function scanLoadDir(path) {
   }
 }
 
-/* ---------- 设置 ---------- */
 function renderStorageForm(state){
   const providers = state.providers, defaultId = state.defaultId, statuses = state.statuses;
   const typeOpts = ['alist', '115', 'quark', 'quark_tv'];
@@ -1298,25 +1274,24 @@ function bindStorageForm(){
   const saveBtn = $('#btn-save-storage');
   if (saveBtn) saveBtn.addEventListener('click', saveStorageSettings);
   const addBtn = $('#btn-add-provider');
-  if (addBtn) addBtn.addEventListener('click', function(){
+  if (addBtn) addBtn.addEventListener('click', async function(){
     const s = window.__providerState;
     const nid = 'alist-' + (s.providers.length + 1);
     s.providers.push({ id: nid, type: 'alist', name: 'AList 存储', config: { base_url: '', refresh_username: '', refresh_password: '' } });
-    box.innerHTML = renderStorageForm(s) + box.innerHTML;
-    bindStorageForm();
+    await loadSettings();
   });
   box.querySelectorAll('.btn-del').forEach(function(btn){
-    btn.addEventListener('click', function(){
+    btn.addEventListener('click', async function(){
       const s = window.__providerState;
       const idx = +btn.dataset.idx;
       if (!confirm('删除存储源「' + (s.providers[idx].name || s.providers[idx].id) + '」？')) return;
       s.providers.splice(idx, 1);
-      box.innerHTML = renderStorageForm(s) + box.innerHTML;
-      bindStorageForm();
+      await loadSettings();
     });
   });
   box.querySelectorAll('.btn-test').forEach(function(btn){
     btn.addEventListener('click', async function(){
+      try { await saveStorageSettingsSilent(); } catch(_) {}
       const payload = collectProviderPayload();
       const idx = +btn.dataset.idx;
       const target = payload.storage_providers[idx];
@@ -1336,6 +1311,24 @@ function bindStorageForm(){
         btn.disabled = false; btn.textContent = '测试连接';
       }
     });
+  });
+}
+
+async function saveStorageSettingsSilent(){
+  const s = window.__providerState;
+  const payload = collectProviderPayload();
+  payload.storage_providers.forEach(function(p, i){
+    if (!p.config.refresh_password){
+      const orig = (s.providers[i] || {}).config || {};
+      if (orig.refresh_password) p.config.refresh_password = orig.refresh_password;
+    }
+  });
+  await api('/api/settings', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      storage_providers: JSON.stringify(payload.storage_providers),
+      storage_default_provider_id: payload.defaultId
+    })
   });
 }
 
@@ -1557,7 +1550,6 @@ function bindSubsonicPanel(){
   });
 }
 
-/* ---------- 加/删歌 ---------- */
 async function addToPlaylist(){
   const sel = document.getElementById('ab-playlist-select');
   const plId = (sel && sel.value) || state.activePlaylistId;
@@ -1609,7 +1601,23 @@ async function removeFromPlaylist(){
   } catch (e){ toast('失败：' + e.message, 'err'); }
 }
 
-/* ---------- 播放 ---------- */
+async function deleteSongs(){
+  const ids = Array.from(state.selected);
+  if (!ids.length) return toast('请先勾选歌曲', 'err');
+  if (!confirm('确定删除选中的 ' + ids.length + ' 首歌曲？此操作不可恢复。')) return;
+  try {
+    await api('/api/songs', {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ song_ids: ids }),
+    });
+    toast('已删除 ' + ids.length + ' 首', 'ok');
+    state.selected.clear();
+    await loadSongs();
+    applyFilter();
+  } catch (e){ toast('删除失败：' + e.message, 'err'); }
+}
+
 const audio = $('#player');
 function playSong(s){
   if (state.playingId === s.id){
@@ -1648,7 +1656,11 @@ audio.addEventListener('timeupdate', () => {
   $('#pl-dur').textContent = fmtDuration(d);
   if (d) $('#pl-seek').value = Math.round(c / d * 100);
 });
-audio.addEventListener('ended', () => { state.playingId = null; });
+audio.addEventListener('ended', () => {
+  state.playingId = null;
+  updatePlayIcon();
+  render();
+});
 $('#btn-play-pause').addEventListener('click', () => {
   if (!audio.src) return;
   if (audio.paused) audio.play(); else audio.pause();
@@ -1657,7 +1669,6 @@ $('#pl-seek').addEventListener('input', e => {
   if (audio.duration) audio.currentTime = audio.duration * e.target.value / 100;
 });
 
-/* ---------- 事件绑定 ---------- */
 $('#nav-all').addEventListener('click', selectAllView);
 if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; switchMainView('artists'); });
 if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; switchMainView('albums'); });
@@ -1712,6 +1723,24 @@ $('#btn-refresh-pl').addEventListener('click', async () => {
 });
 
 $('#list-body').addEventListener('click', e => {
+  const link = e.target.closest('.artist-link');
+  if (link){
+    e.stopPropagation();
+    const artist = link.dataset.artist;
+    if (!artist) return;
+    state.filterArtist = artist;
+    state.filterAlbum = null;
+    state.view = 'all';
+    state.activePlaylistId = null;
+    state.selected.clear();
+    switchMainView('songs');
+    renderSidebar();
+    setViewTitle();
+    $('#view-title').textContent = '艺术家：' + artist;
+    applyFilter();
+    saveUIState();
+    return;
+  }
   const pbtn = e.target.closest('.play-btn');
   if (pbtn){
     e.stopPropagation();
@@ -1741,6 +1770,7 @@ $('#list-body').addEventListener('dblclick', e => {
 $('#btn-all').addEventListener('click', () => { state.filtered.forEach(s => state.selected.add(s.id)); render(); });
 $('#btn-invert').addEventListener('click', () => { state.filtered.forEach(s => { state.selected.has(s.id) ? state.selected.delete(s.id) : state.selected.add(s.id); }); render(); });
 $('#btn-clear').addEventListener('click', () => { state.selected.clear(); render(); });
+$('#btn-delete').addEventListener('click', deleteSongs);
 $('#ab-clear').addEventListener('click', () => { state.selected.clear(); render(); });
 $('#ab-add').addEventListener('click', addToPlaylist);
 $('#ab-remove').addEventListener('click', removeFromPlaylist);
@@ -1750,7 +1780,6 @@ if (document.getElementById('ab-playlist-select')) {
   });
 }
 
-// "+ 添加歌曲"按钮：跳到全部歌曲视图，目标歌单保持
 document.addEventListener('click', function(e){
   const btn = e.target.closest('#btn-add-songs-to-playlist');
   if (!btn) return;
@@ -1771,18 +1800,16 @@ document.addEventListener('click', function(e){
   toast('请在列表中勾选歌曲，再点底部的"加入歌单"', 'ok');
 });
 
-$('#f-provider').addEventListener('change', applyFilter);
+$('#f-provider').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#f-format').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 if ($('#page-size')) $('#page-size').addEventListener('change', function(){
   state.pageSize = parseInt(this.value, 10) || 50;
   state.page = 1;
   render();
 });
-if ($('#f-provider')) $('#f-provider').addEventListener('change', function(){ state.page = 1; });
-if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; });
+if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
-// 扫描
 $('#btn-new-scan').addEventListener('click', function(){
   $('#scan-modal').classList.add('show');
   scanLoadDir(scanCurPath || '/');
@@ -1847,7 +1874,6 @@ document.addEventListener('click', e => {
   sb.classList.remove('open');
 });
 
-/* ---------- 新建歌单 ---------- */
 async function createPlaylist(){
   const name = $('#pl-new-name').value.trim();
   const comment = $('#pl-new-comment').value.trim();
@@ -1876,7 +1902,6 @@ async function createPlaylist(){
   }
 }
 
-/* ---------- 启动 ---------- */
 async function boot(){
   try {
     try {
@@ -1905,13 +1930,13 @@ async function boot(){
 
     renderSidebar();
     buildFilterOptions();
+    if (saved && saved.page) state.page = saved.page;
     applyFilter();
 
     if (saved && saved.mainView && saved.mainView !== 'songs'){
       switchMainView(saved.mainView);
     } else {
       setViewTitle();
-      if (saved && saved.page) state.page = saved.page;
     }
   } catch (e){
     $('#list-body').innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
