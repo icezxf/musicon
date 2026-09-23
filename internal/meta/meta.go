@@ -19,35 +19,74 @@ type Info struct {
 	Lyrics      string
 	CoverData   []byte
 	CoverMime   string
+
+	TrackNumber int
+	DiscNumber  int
+	Year        int
+	Composer    string
+	Bitrate     int
+	SampleRate  int
+	Channels    int
+	ISRC        string
+	BPM         int
 }
 
 func Parse(data []byte, filename string) (*Info, error) {
 	info := &Info{}
 
+	// 1) dhowden/tag 标签
 	if m, err := tag.ReadFrom(bytes.NewReader(data)); err == nil {
 		info.Title = strings.TrimSpace(m.Title())
 		info.Artist = strings.TrimSpace(m.Artist())
 		info.Album = strings.TrimSpace(m.Album())
 		info.AlbumArtist = strings.TrimSpace(m.AlbumArtist())
 		info.Genre = strings.TrimSpace(m.Genre())
-
+		info.Composer = strings.TrimSpace(m.Composer())
+		info.Year = m.Year()
+		if n, _ := m.Track(); n > 0 {
+			info.TrackNumber = n
+		}
+		if n, _ := m.Disc(); n > 0 {
+			info.DiscNumber = n
+		}
 		if pic := m.Picture(); pic != nil {
 			info.CoverData = pic.Data
 			info.CoverMime = pic.MIMEType
 		}
 		info.Lyrics = extractLyrics(m)
 
-		// 从 Raw 里读所有艺术家（FLAC 多 ARTIST / MP3 多 TPE1）
+		// 从 Raw 里读更多
 		if raw := m.Raw(); raw != nil {
-			for _, key := range []string{"ARTIST", "TPE1", "albumartist", "TPE2"} {
+			for _, key := range []string{"ARTIST", "TPE1"} {
 				if v, ok := raw[key]; ok {
-					multi := extractMulti(v)
-					if multi != "" {
-						if key == "ARTIST" || key == "TPE1" {
-							info.Artist = multi
-						} else if key == "albumartist" || key == "TPE2" {
-							info.AlbumArtist = multi
-						}
+					if multi := extractMulti(v); multi != "" {
+						info.Artist = multi
+						break
+					}
+				}
+			}
+			for _, key := range []string{"ALBUMARTIST", "TPE2"} {
+				if v, ok := raw[key]; ok {
+					if multi := extractMulti(v); multi != "" {
+						info.AlbumArtist = multi
+						break
+					}
+				}
+			}
+			// ISRC
+			for _, key := range []string{"ISRC", "TSRC"} {
+				if v, ok := raw[key]; ok {
+					if s := toStr(v); s != "" {
+						info.ISRC = s
+						break
+					}
+				}
+			}
+			// BPM
+			for _, key := range []string{"BPM", "TBPM"} {
+				if v, ok := raw[key]; ok {
+					if s := toStr(v); s != "" {
+						info.BPM = atoi(s)
 						break
 					}
 				}
@@ -55,7 +94,7 @@ func Parse(data []byte, filename string) (*Info, error) {
 		}
 	}
 
-	// FLAC 手工补全
+	// 2) FLAC 手工补全 + 音频流信息
 	if len(data) >= 4 && string(data[:4]) == "fLaC" {
 		vc := parseFLACVorbis(data)
 		if info.Title == "" {
@@ -76,12 +115,47 @@ func Parse(data []byte, filename string) (*Info, error) {
 		if info.Lyrics == "" {
 			info.Lyrics = firstVC(vc, "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS")
 		}
-		if info.Duration == 0 {
-			info.Duration = flacDuration(data)
+		if info.TrackNumber == 0 {
+			info.TrackNumber = atoi(firstVC(vc, "TRACKNUMBER", "TRACK"))
+		}
+		if info.DiscNumber == 0 {
+			info.DiscNumber = atoi(firstVC(vc, "DISCNUMBER", "DISC"))
+		}
+		if info.Year == 0 {
+			info.Year = atoi(firstVC(vc, "DATE", "YEAR"))
+		}
+		if info.Composer == "" {
+			info.Composer = firstVC(vc, "COMPOSER")
+		}
+		if info.ISRC == "" {
+			info.ISRC = firstVC(vc, "ISRC")
+		}
+		if info.BPM == 0 {
+			info.BPM = atoi(firstVC(vc, "BPM"))
+		}
+
+		// 用 mewkiz/flac 读音频流信息
+		if stream, err := flac.Parse(bytes.NewReader(data)); err == nil && stream != nil {
+			sr := int(stream.Info.SampleRate)
+			ch := int(stream.Info.NChannels)
+			bps := int(stream.Info.BitsPerSample)
+			if sr > 0 {
+				info.SampleRate = sr
+			}
+			if ch > 0 {
+				info.Channels = ch
+			}
+			if sr > 0 && ch > 0 && bps > 0 {
+				info.Bitrate = sr * ch * bps / 1000
+			}
+			if info.Duration == 0 {
+				info.Duration = int(stream.Duration().Seconds())
+			}
+			stream.Close()
 		}
 	}
 
-	// 文件名 fallback
+	// 3) 文件名 fallback
 	if info.Title == "" {
 		info.Title = titleFromFilename(filename)
 	}
@@ -94,11 +168,11 @@ func Parse(data []byte, filename string) (*Info, error) {
 	info.Artist = repairMojibake(info.Artist)
 	info.Album = repairMojibake(info.Album)
 	info.AlbumArtist = repairMojibake(info.AlbumArtist)
+	info.Composer = repairMojibake(info.Composer)
 
 	return info, nil
 }
 
-// extractMulti 把多值元数据合并
 func extractMulti(v any) string {
 	switch x := v.(type) {
 	case []string:
@@ -197,7 +271,6 @@ func firstVC(vc map[string][]string, keys ...string) string {
 	return ""
 }
 
-// allVC 把多个值合并（FLAC 里多艺术家）
 func allVC(vc map[string][]string, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := vc[k]; ok && len(v) > 0 {
@@ -212,20 +285,6 @@ func allVC(vc map[string][]string, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-// flacDuration 用 mewkiz/flac 读 STREAMINFO 算时长
-func flacDuration(data []byte) int {
-	defer func() { recover() }()
-	stream, err := flac.Parse(bytes.NewReader(data))
-	if err != nil || stream == nil {
-		return 0
-	}
-	defer stream.Close()
-	if stream.Info.SampleRate == 0 {
-		return 0
-	}
-	return int(stream.Info.NSamples / uint64(stream.Info.SampleRate))
 }
 
 // ---------- 文件名 fallback ----------
