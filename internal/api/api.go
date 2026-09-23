@@ -191,7 +191,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
-	// LX 搜索/歌词/播放地址
+	// LX 搜索 / 歌词 / 播放地址
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
@@ -557,7 +557,7 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 
 // ---------- LX 搜索 / 歌词 / 播放地址 ----------
 
-// GET /api/music/metadata-search?keyword=xxx&source=tx&page=1&limit=30
+// GET /api/music/metadata-search?keyword=xxx&source=wy&page=1&limit=30
 func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	kw := r.URL.Query().Get("keyword")
 	if kw == "" {
@@ -566,7 +566,7 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	source := r.URL.Query().Get("source")
 	if source == "" {
-		source = "tx"
+		source = "wy"
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -576,14 +576,40 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
 		return
 	}
+
+	// 把每首歌的 Raw 也序列化出去，前端再传回来给 play-url
+	type songOut struct {
+		ID       string         `json:"id"`
+		Name     string         `json:"name"`
+		Singer   string         `json:"singer"`
+		Album    string         `json:"album"`
+		Source   string         `json:"source"`
+		Duration int            `json:"duration"`
+		Cover    string         `json:"cover"`
+		Raw      map[string]any `json:"raw"` // 完整字段，play-url 时回传
+	}
+	out := make([]songOut, 0, len(songs))
+	for _, s := range songs {
+		out = append(out, songOut{
+			ID:       s.ID,
+			Name:     s.Name,
+			Singer:   s.Singer,
+			Album:    s.Album,
+			Source:   s.Source,
+			Duration: s.Duration,
+			Cover:    s.Cover,
+			Raw:      s.Raw,
+		})
+	}
+
 	writeJSON(w, 200, map[string]any{
 		"source":  source,
-		"count":   len(songs),
-		"results": songs,
+		"count":   len(out),
+		"results": out,
 	})
 }
 
-// GET /api/music/metadata-lyric?source=tx&songId=xxx
+// GET /api/music/metadata-lyric?source=wy&songId=xxx
 func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	songID := r.URL.Query().Get("songId")
@@ -604,18 +630,19 @@ func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/music/play-url
-// body: {"source":"tx","songId":"xxx"}
+// body: {"songInfo": {...}, "quality": "320k"}
+// songInfo 应为搜索结果里的 raw 字段
 func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Source string `json:"source"`
-		SongID string `json:"songId"`
+		SongInfo map[string]any `json:"songInfo"`
+		Quality  string         `json:"quality"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if body.SongID == "" {
-		writeJSON(w, 400, map[string]any{"detail": "songId required"})
+	if body.SongInfo == nil {
+		writeJSON(w, 400, map[string]any{"detail": "songInfo required"})
 		return
 	}
-	u, err := h.LX.GetSongURL(body.SongID, body.Source)
+	u, err := h.LX.GetSongURL(body.SongInfo, body.Quality)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
 		return
@@ -626,8 +653,8 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 // GET /api/lx/status —— 探测 LX 是否可达
 func (h *Handler) lxStatus(w http.ResponseWriter, r *http.Request) {
 	url := h.Settings.GetLXURL()
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(strings.TrimRight(url, "/") + "/api/music/search?source=tx&name=test&type=song&limit=1")
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(strings.TrimRight(url, "/") + "/api/music/search?source=wy&name=test&type=song&limit=1")
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"running": false, "url": url, "error": err.Error()})
 		return
