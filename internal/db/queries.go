@@ -62,7 +62,8 @@ func (h *Holder) UpsertSong(s Song) error {
 			title=excluded.title, artist=excluded.artist, album=excluded.album,
 			album_artist=excluded.album_artist, genre=excluded.genre, fmt=excluded.fmt,
 			dur=excluded.dur, path=excluded.path, provider_id=excluded.provider_id,
-			cover_path=excluded.cover_path, cover_art=excluded.cover_art,
+			cover_path=CASE WHEN excluded.cover_path!='' THEN excluded.cover_path ELSE songs.cover_path END,
+			cover_art=CASE WHEN excluded.cover_art!='' THEN excluded.cover_art ELSE songs.cover_art END,
 			lyrics=CASE WHEN excluded.lyrics!='' THEN excluded.lyrics ELSE songs.lyrics END,
 			track_number=excluded.track_number, disc_number=excluded.disc_number,
 			year=excluded.year, composer=excluded.composer,
@@ -83,13 +84,16 @@ func (h *Holder) ListSongs() ([]Song, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Song
+	out := []Song{}
 	for rows.Next() {
 		s, err := scanSong(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -126,11 +130,14 @@ func (h *Holder) ListPlaylists() ([]Playlist, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Playlist
+	out := []Playlist{}
 	for rows.Next() {
 		var p Playlist
 		rows.Scan(&p.ID, &p.Name, &p.Comment, &p.Owner, &p.Public, &p.Readonly, &p.Count, &p.Duration)
 		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -153,7 +160,7 @@ func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Song
+	out := []Song{}
 	for rows.Next() {
 		s, err := scanSong(rows)
 		if err != nil {
@@ -161,19 +168,37 @@ func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
-func (h *Holder) CreatePlaylist(name, comment, owner string) (string, error) {
+// CreatePlaylist 加 public 参数
+func (h *Holder) CreatePlaylist(name, comment, owner string, public bool) (string, error) {
 	id := newShortID("pl")
-	_, err := h.DB.Exec(`INSERT INTO playlists(id,name,comment,owner) VALUES(?,?,?,?)`, id, name, comment, owner)
+	p := 0
+	if public {
+		p = 1
+	}
+	_, err := h.DB.Exec(`INSERT INTO playlists(id,name,comment,owner,public) VALUES(?,?,?,?,?)`,
+		id, name, comment, owner, p)
 	return id, err
 }
 
 func (h *Holder) DeletePlaylist(id string) error {
-	h.DB.Exec(`DELETE FROM playlist_tracks WHERE playlist_id=?`, id)
-	_, err := h.DB.Exec(`DELETE FROM playlists WHERE id=?`, id)
-	return err
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM playlist_tracks WHERE playlist_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM playlists WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (h *Holder) AddSongsToPlaylist(plID string, songIDs []string) error {
@@ -182,10 +207,20 @@ func (h *Holder) AddSongsToPlaylist(plID string, songIDs []string) error {
 		return err
 	}
 	defer tx.Rollback()
-	var n int
-	tx.QueryRow(`SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?`, plID).Scan(&n)
+
+	var exist int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM playlists WHERE id=?`, plID).Scan(&exist); err != nil {
+		return err
+	}
+	if exist == 0 {
+		return fmt.Errorf("playlist not found")
+	}
+
+	var next int
+	tx.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM playlist_tracks WHERE playlist_id=?`, plID).Scan(&next)
 	for i, sid := range songIDs {
-		tx.Exec(`INSERT OR IGNORE INTO playlist_tracks(playlist_id,song_id,sort_order) VALUES(?,?,?)`, plID, sid, n+i)
+		tx.Exec(`INSERT OR IGNORE INTO playlist_tracks(playlist_id,song_id,sort_order) VALUES(?,?,?)`,
+			plID, sid, next+i)
 	}
 	tx.Exec(`UPDATE playlists SET song_count=(SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?`, plID, plID)
 	return tx.Commit()
@@ -201,17 +236,33 @@ func (h *Holder) RemoveSongsFromPlaylist(plID string, songIDs []string) error {
 	for _, s := range songIDs {
 		args = append(args, s)
 	}
-	_, err := h.DB.Exec(`DELETE FROM playlist_tracks WHERE playlist_id=? AND song_id IN (`+ph+`)`, args...)
+	tx, err := h.DB.Begin()
 	if err != nil {
 		return err
 	}
-	h.DB.Exec(`UPDATE playlists SET song_count=(SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?) WHERE id=?`, plID, plID)
-	return nil
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM playlist_tracks WHERE playlist_id=? AND song_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE playlists SET song_count=(SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?`, plID, plID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (h *Holder) RecordPlay(songID, source, client string) {
-	h.DB.Exec(`INSERT INTO play_history(song_id,source,client) VALUES(?,?,?)`, songID, source, client)
-	h.DB.Exec(`UPDATE songs SET plays=plays+1 WHERE id=?`, songID)
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO play_history(song_id,source,client) VALUES(?,?,?)`, songID, source, client); err != nil {
+		return
+	}
+	if _, err := tx.Exec(`UPDATE songs SET plays=plays+1 WHERE id=?`, songID); err != nil {
+		return
+	}
+	tx.Commit()
 }
 
 func (h *Holder) RecentPlays(limit int) ([]map[string]any, error) {
@@ -223,7 +274,7 @@ func (h *Holder) RecentPlays(limit int) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id int
 		var sid, playedAt, title, artist string
@@ -256,7 +307,7 @@ func (h *Holder) ListScanTasks(limit int) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, path, mode, status, source, created string
 		var count, total, processed int
@@ -271,7 +322,7 @@ func (h *Holder) ListScanTasks(limit int) ([]map[string]any, error) {
 }
 
 func newShortID(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), time.Now().UnixNano()&0xffff)
 }
 
 func (h *Holder) UpdateSong(id string, fields map[string]string) error {
@@ -306,7 +357,30 @@ func (h *Holder) DeleteSongs(ids []string) error {
 	for i, id := range ids {
 		args[i] = id
 	}
-	h.DB.Exec("DELETE FROM playlist_tracks WHERE song_id IN ("+ph+")", args...)
-	_, err := h.DB.Exec("DELETE FROM songs WHERE id IN ("+ph+")", args...)
-	return err
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 记录受影响的歌单，稍后更新计数
+	var affected []string
+	if rows, err := tx.Query(`SELECT DISTINCT playlist_id FROM playlist_tracks WHERE song_id IN (`+ph+`)`, args...); err == nil {
+		for rows.Next() {
+			var pid string
+			rows.Scan(&pid)
+			affected = append(affected, pid)
+		}
+		rows.Close()
+	}
+	if _, err := tx.Exec(`DELETE FROM playlist_tracks WHERE song_id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM songs WHERE id IN (`+ph+`)`, args...); err != nil {
+		return err
+	}
+	for _, pid := range affected {
+		tx.Exec(`UPDATE playlists SET song_count=(SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?`, pid, pid)
+	}
+	return tx.Commit()
 }
