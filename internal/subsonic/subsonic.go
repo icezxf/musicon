@@ -809,9 +809,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HEAD 请求：本地返回元数据头
-	// 关键：必须正确处理 Range 头，回 206 + Content-Range
-	// 否则客户端以为不支持 Range，seek 时会从头下载
+	// HEAD 本地返回元数据头（移动云 CDN 拒绝 HEAD）
+	// 关键：正确处理 Range 头，返回 206
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
 		w.Header().Set("Accept-Ranges", "bytes")
@@ -824,7 +823,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("bytes %d-%d/%d", start, end, s.FileSize))
 				w.Header().Set("Content-Length",
 					strconv.FormatInt(end-start+1, 10))
-				w.WriteHeader(http.StatusPartialContent) // 206
+				w.WriteHeader(http.StatusPartialContent)
 				return
 			}
 		}
@@ -857,17 +856,13 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseRangeHeader 解析 HTTP Range 头。仅支持单范围。
-// "bytes=5000000-"     → 5000000 到末尾
-// "bytes=0-100000"     → 0 到 100000
-// "bytes=-1000"        → 最后 1000 字节
-// 返回 [start, end] 均为闭区间。
 func parseRangeHeader(h string, size int64) (int64, int64, bool) {
 	if !strings.HasPrefix(h, "bytes=") {
 		return 0, 0, false
 	}
 	spec := strings.TrimPrefix(h, "bytes=")
 	if i := strings.IndexByte(spec, ','); i >= 0 {
-		spec = spec[:i] // 只处理第一个范围
+		spec = spec[:i]
 	}
 	dash := strings.IndexByte(spec, '-')
 	if dash < 0 {
@@ -878,7 +873,6 @@ func parseRangeHeader(h string, size int64) (int64, int64, bool) {
 
 	var start, end int64
 	if startStr == "" {
-		// "-suffix"：最后 N 字节
 		n, err := strconv.ParseInt(endStr, 10, 64)
 		if err != nil || n <= 0 {
 			return 0, 0, false
@@ -909,7 +903,6 @@ func parseRangeHeader(h string, size int64) (int64, int64, bool) {
 	return start, end, true
 }
 
-// 从 Fmt 推导 Content-Type，和 songToMap 里的映射保持一致
 func contentTypeForFmt(fmtName string) string {
 	switch strings.ToLower(fmtName) {
 	case "flac":
@@ -966,10 +959,13 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 	serveLocalCover(w, r, coverPath)
 }
 
+// findCoverPath 根据 id/type 定位封面文件路径
 func (h *Handler) findCoverPath(id, typ string) string {
 	if typ == "artist" {
 		return ""
 	}
+
+	// 专辑
 	if typ == "album" || strings.HasPrefix(id, "al-") {
 		songs, _ := h.DB.ListSongs()
 		for _, s := range songs {
@@ -979,11 +975,20 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		}
 		return ""
 	}
+
+	// 歌单：归一化 pl- 前缀
+	//   "pl-xxx"    → "pl-xxx"
+	//   "pl-pl-xxx" → "pl-xxx"
+	//   "xxx"       → "pl-xxx"
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		realID := id
-		for strings.HasPrefix(realID, "pl-") {
-			realID = strings.TrimPrefix(realID, "pl-")
+		base := id
+		for strings.HasPrefix(base, "pl-") {
+			base = strings.TrimPrefix(base, "pl-")
 		}
+		if base == "" {
+			return ""
+		}
+		realID := "pl-" + base
 		songs, _ := h.DB.GetPlaylistSongs(realID)
 		for _, s := range songs {
 			if s.CoverPath != "" {
@@ -992,6 +997,8 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		}
 		return ""
 	}
+
+	// 单曲
 	s, err := h.DB.GetSong(id)
 	if err != nil {
 		return ""
@@ -1089,7 +1096,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request) {
 			"@public":    p.Public,
 			"@songCount": p.Count,
 			"@duration":  p.Duration,
-			"@coverArt":  "pl-" + p.ID,
+			"@coverArt":  p.ID, // 修复：p.ID 已经是 pl-xxx，不要再加前缀
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 		})
@@ -1119,7 +1126,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 			"@public":    p.Public,
 			"@songCount": len(entries),
 			"@duration":  totalDur,
-			"@coverArt":  "pl-" + p.ID,
+			"@coverArt":  p.ID, // 修复：同上
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 			"entry":      entries,
