@@ -95,6 +95,20 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .artist-link:hover{color:var(--accent-h);text-decoration:underline}
 .btn-ghost.danger{color:var(--danger)}
 .btn-ghost.danger:hover{background:rgba(239,68,68,.12);color:var(--danger-h)}
+
+/* 艺术家头部卡片 */
+.artist-header{padding:20px 12px 24px;display:flex;gap:20px;align-items:flex-start;
+  border-bottom:1px solid var(--border);margin-bottom:8px}
+.artist-header-avatar{width:120px;height:120px;border-radius:50%;flex-shrink:0;
+  background:linear-gradient(135deg,#6366f1,#a855f7);
+  display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:700;color:#fff;
+  overflow:hidden;background-size:cover;background-position:center;background-repeat:no-repeat}
+.artist-header-info{flex:1;min-width:0;padding-top:8px}
+.artist-header-name{font-size:24px;font-weight:600;margin-bottom:10px;letter-spacing:-.3px}
+.artist-header-bio{font-size:13px;color:var(--text-2);line-height:1.7;max-height:140px;
+  overflow-y:auto;white-space:pre-wrap;padding-right:8px}
+.artist-header-meta{font-size:11px;color:var(--text-3);margin-top:8px}
+
 .list-wrap{flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:0 28px 100px}
 .pager{display:flex;align-items:center;gap:4px}
 .pager button{min-width:30px;height:28px;padding:0 8px;border-radius:6px;background:var(--bg-2);border:1px solid var(--border);color:var(--text-2);font-size:12px;transition:all .12s;cursor:pointer}
@@ -264,7 +278,93 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 #online-modal .online-footer{display:flex;gap:10px;align-items:center;margin-top:12px}
 #online-modal .online-footer .online-info{flex:1;font-size:13px;color:var(--text-2)}
 #online-modal .online-footer .online-info b{color:var(--accent-h)}
+
 @media (max-width:768px){
+  .sidebar{width:280px;box-shadow:4px 0 24px rgba(0,0,0,.5)}
+  .brand{padding:16px 14px 12px}
+  .brand-name{font-size:14px}
+  .nav-section{padding:10px 8px}
+  .nav-item{padding:11px 10px;font-size:14.5px}
+  .main{height:100vh;overflow:hidden}
+  .topbar{padding:12px 12px 8px;gap:8px;flex-wrap:wrap}
+  .topbar-title{font-size:16px;max-width:100%;flex:1 1 100%;margin-bottom:4px;order:-1}
+  .search-box{flex:1 1 100%;max-width:none;height:36px;order:1}
+  .topbar-actions{flex:1 1 100%;order:2;gap:6px}
+  .topbar-actions .select{flex:1;height:34px;font-size:12.5px;padding-left:8px}
+  #btn-menu{order:-2;display:flex !important}
+  .toolbar{padding:8px 12px;gap:8px;flex-wrap:wrap}
+  .sel-info{font-size:12.5px;flex:1 1 100%}
+  .toolbar-actions{flex:1 1 100%;justify-content:flex-start;gap:4px}
+  .btn-ghost{padding:6px 10px;font-size:12.5px}
+  #pager-slot{width:100%;order:3;margin-top:6px}
+  .pager{flex-wrap:wrap;justify-content:center}
+  .pager button{min-width:28px;height:26px;padding:0 6px;font-size:11.5px}
+  .pager .pg-info{font-size:11px;margin-left:4px}
+  .list-wrap{padding:0 8px 120px}
+  .list-header{display:none}
+  .row{
+    display:flex;flex-direction:column;
+    padding:12px;margin-bottom:6px;border-radius:10px;
+    background:var(--bg-1);border:1px solid var(--border);
+    grid-template-columns:none;gap:0;
+  }
+  .row.selected{background:var(--accent-soft);border-color:var(--accent)}
+  .row:hover{background:var(--bg-1)}
+  .row .col-chk{position:absolute;left:12px;top:12px;display:flex}
+  .row .col-cover{position:absolute;left:44px;top:12px;display:flex}
+  .row .col-play{position:absolute;right:12px;top:12px;display:flex}
+  .row{position:relative;min-height:68px}
+  .row .col-cover .cover{width:48px;height:48px;border-radius:8px}
+  .row .col-num{display:none}
+  .row .col-title{margin-left:104px;margin-right:44px;min-height:48px;display:flex;flex-direction:column;justify-content:center}
+  .row .col-title-text{font-size:14px;font-weight:500;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .row .col-artist{display:block;margin-left:104px;font-size:12px;color:var(--text-3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 104px)}
+  .row .col-album{display:block;margin-left:104px;font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 104px)}
+  .row .col-dur{display:block;position:absolute;right:12px;bottom:12px;font-size:11.5px;color:var(--text-3)}
+  .row .col-prov{display:inline-flex;position:absolute;right:60px;bottom:12px;font-size:10.5px;height:18px;padding:0 6px}
+  .row .play-btn{width:36px;height:36px}
+  .row .play-btn svg{width:15px;height:15px}
+  .sidebar.open::after{content:"";position:fixed;left:280px;top:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:-1}
+  .actionbar{bottom:78px;left:12px;right:12px;transform:none;padding:10px 12px;gap:10px;max-width:none}
+  .actionbar.show{transform:none}
+  .actionbar-info{font-size:12.5px;flex:1}
+  .actionbar-btns{gap:6px}
+  .btn-primary,.btn-danger{padding:8px 12px;font-size:12.5px}
+  .player{padding:8px 10px;gap:10px;flex-wrap:wrap}
+  .player-info{flex:1 1 100%;gap:8px}
+  .player-cover{width:36px;height:36px}
+  .player-title{font-size:12.5px}
+  .player-artist{font-size:11px}
+  .player-ctrl{gap:4px}
+  .player-ctrl button{width:32px;height:32px}
+  .player-progress{flex:1 1 auto;font-size:11px;gap:6px}
+  .player-progress input[type=range]{min-width:60px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;padding:4px 0}
+  .gcard{padding:10px}
+  .gcard-avatar,.gcard-cover{font-size:24px}
+  .gcard-avatar-container{width:100%;aspect-ratio:1}
+  .gcard-avatar{width:80%;height:80%}
+  .gcard-name{font-size:12.5px}
+  .gcard-sub{font-size:10.5px}
+  .card{padding:12px 14px}
+  .field{font-size:12.5px;flex-direction:column;gap:2px;padding:8px 0}
+  .field-label{width:100%;font-size:11px}
+  .field-value{font-size:13px}
+  [data-section] .grid,[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important}
+  .lbl{font-size:11px}
+  .modal{padding:20px;width:calc(100vw - 32px);max-width:400px}
+  .modal-title{font-size:15px;margin-bottom:14px}
+  .modal .input,.modal .select{height:36px;font-size:13.5px}
+  .modal-actions{gap:8px}
+  .modal-actions .btn-primary,.modal-actions .btn-ghost{padding:8px 14px;font-size:13px}
+  .icon-btn{width:36px;height:36px}
+  #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
+  #view-artists, #view-albums{overflow-y:auto}
+  .artist-header{flex-direction:column;align-items:center;text-align:center;padding:16px 12px}
+  .artist-header-avatar{width:100px;height:100px;font-size:40px}
+  .artist-header-info{padding-top:0;width:100%}
+  .artist-header-name{font-size:20px;margin-bottom:8px}
+  .artist-header-bio{max-height:100px;font-size:12.5px}
   #online-modal .modal{width:100vw;height:100vh;max-height:100vh;border-radius:0;padding:16px}
   #online-modal .online-row{grid-template-columns:32px 40px 1fr 60px}
   #online-modal .online-row .orow-artist,
@@ -371,6 +471,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
     </div>
 
     <div class="list-wrap" id="view-songs">
+      <div id="artist-header" style="display:none"></div>
       <div class="list-header">
         <div></div><div style="text-align:center">#</div><div></div><div></div>
         <div>标题</div><div>艺术家</div><div>专辑</div><div>时长</div><div>音源</div>
@@ -493,7 +594,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
-<!-- 在线搜索弹窗（新增） -->
+<!-- 在线搜索弹窗 -->
 <div class="modal-bg" id="online-modal">
   <div class="modal">
     <div class="modal-title">在线搜索歌曲</div>
@@ -538,7 +639,6 @@ const state = {
   pageSize: 50,
   filterArtist: null,
   filterAlbum: null,
-  // 在线搜索
   onlineResults: [],
   onlineSelected: new Set(),
 };
@@ -691,8 +791,65 @@ function renderArtistLinks(s){
   }).join('、');
 }
 
+/* ---------- 艺术家头部（头像 + 简介） ---------- */
+let _lastArtistHeaderName = null;
+async function renderArtistHeader(){
+  const box = document.getElementById('artist-header');
+  if (!box) return;
+
+  // 没有筛选艺术家 → 隐藏
+  if (!state.filterArtist){
+    if (_lastArtistHeaderName !== null){
+      box.style.display = 'none';
+      box.innerHTML = '';
+      _lastArtistHeaderName = null;
+    }
+    return;
+  }
+
+  // 已渲染同一个艺术家 → 跳过
+  if (_lastArtistHeaderName === state.filterArtist) return;
+  _lastArtistHeaderName = state.filterArtist;
+
+  const name = state.filterArtist;
+  const initial = name.charAt(0).toUpperCase();
+  box.style.display = '';
+  box.innerHTML =
+    '<div class="artist-header-avatar" id="artist-header-avatar">' + esc(initial) + '</div>'
+    + '<div class="artist-header-info">'
+    +   '<div class="artist-header-name">' + esc(name) + '</div>'
+    +   '<div class="artist-header-bio" id="artist-header-bio">加载中…</div>'
+    +   '<div class="artist-header-meta" id="artist-header-meta"></div>'
+    + '</div>';
+
+  // 1. 加载头像
+  const img = new Image();
+  img.onload = function(){
+    const el = document.getElementById('artist-header-avatar');
+    if (el && _lastArtistHeaderName === name){
+      el.style.backgroundImage = 'url("/api/artist/image?name=' + encodeURIComponent(name) + '")';
+      el.textContent = '';
+    }
+  };
+  img.src = '/api/artist/image?name=' + encodeURIComponent(name);
+
+  // 2. 加载简介
+  try {
+    const r = await api('/api/artist/photo?name=' + encodeURIComponent(name));
+    if (_lastArtistHeaderName !== name) return;
+    const bioEl = document.getElementById('artist-header-bio');
+    const metaEl = document.getElementById('artist-header-meta');
+    if (bioEl) bioEl.textContent = (r && r.bio) ? r.bio : '暂无简介';
+    if (metaEl && r && r.source) metaEl.textContent = '数据来源: ' + r.source;
+  } catch(e){
+    const bioEl = document.getElementById('artist-header-bio');
+    if (bioEl) bioEl.textContent = '简介加载失败';
+  }
+}
+
 function render(){
   if (state.mainView !== 'songs') return;
+  renderArtistHeader();
   const all = state.filtered;
   const total = all.length;
   const size = state.pageSize;
@@ -965,6 +1122,7 @@ async function selectPlaylist(plId){
   state.filterAlbum = null;
   state.selected.clear();
   state.playlistTracks = [];
+  _lastArtistHeaderName = null;
   renderSidebar();
   render();
   await loadPlaylistTracks(plId);
@@ -981,6 +1139,7 @@ function selectAllView(){
   state.view = 'all';
   state.activePlaylistId = null;
   state.selected.clear();
+  _lastArtistHeaderName = null;
   renderSidebar();
   buildFilterOptions();
   applyFilter();
@@ -1200,7 +1359,6 @@ function renderOnlineResults(){
     box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">没有结果</div>';
     return;
   }
-  // 已有歌曲集合，用来判断"已导入"
   const existing = new Set(state.songs.map(s => s.id));
   box.innerHTML = list.map(function(s, i){
     const vId = 'lxv-' + s.source + '-' + s.id;
@@ -1746,7 +1904,7 @@ $('#pl-seek').addEventListener('input', e => {
 });
 
 $('#nav-all').addEventListener('click', selectAllView);
-if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; switchMainView('artists'); });
+if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; _lastArtistHeaderName = null; switchMainView('artists'); });
 if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; switchMainView('albums'); });
 
 if ($('#artists-search')) $('#artists-search').addEventListener('input', debounce(renderArtists, 150));
@@ -1760,6 +1918,7 @@ if ($('#artists-body')) $('#artists-body').addEventListener('click', function(e)
   state.view = 'all';
   state.activePlaylistId = null;
   state.selected.clear();
+  _lastArtistHeaderName = null;
   switchMainView('songs');
   renderSidebar();
   setViewTitle();
@@ -1776,6 +1935,7 @@ if ($('#albums-body')) $('#albums-body').addEventListener('click', function(e){
   state.view = 'all';
   state.activePlaylistId = null;
   state.selected.clear();
+  _lastArtistHeaderName = null;
   switchMainView('songs');
   renderSidebar();
   setViewTitle();
@@ -1826,6 +1986,7 @@ $('#list-body').addEventListener('click', e => {
     state.view = 'all';
     state.activePlaylistId = null;
     state.selected.clear();
+    _lastArtistHeaderName = null;
     switchMainView('songs');
     renderSidebar();
     setViewTitle();
@@ -1881,6 +2042,7 @@ document.addEventListener('click', function(e){
   if (!targetPlaylistId) return;
   state.view = 'all';
   state.selected.clear();
+  _lastArtistHeaderName = null;
   renderSidebar();
   setViewTitle();
   buildFilterOptions();
@@ -1903,7 +2065,7 @@ if ($('#page-size')) $('#page-size').addEventListener('change', function(){
 if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
-// 在线搜索入口
+// 在线搜索
 $('#btn-online-search').addEventListener('click', openOnlineModal);
 $('#online-close').addEventListener('click', closeOnlineModal);
 $('#online-search-btn').addEventListener('click', doOnlineSearch);
