@@ -60,7 +60,7 @@ func (c *Client) get(path string, params url.Values) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) post(path string, payload any) ([]byte, error) {
+func (c *Client) post(path string, payload any, headers map[string]string) ([]byte, error) {
 	buf, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -71,6 +71,9 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "musicon-go/1.0")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("lx: %w", err)
@@ -81,7 +84,7 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("lx http %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("lx http %d: %s", resp.StatusCode, truncate(string(body), 300))
 	}
 	return body, nil
 }
@@ -106,13 +109,28 @@ type Song struct {
 	Raw      map[string]any `json:"-"`
 }
 
-// Search 搜索歌曲。source 可为 tx/wy/kg/kw/mg 等，默认 tx。
+// Info 返回原始字段 map，用于传给 lxserver 的 /api/music/url
+func (s *Song) Info() map[string]any {
+	if s.Raw != nil {
+		return s.Raw
+	}
+	// 兜底：重建一个最小 map
+	return map[string]any{
+		"id":     s.ID,
+		"name":   s.Name,
+		"singer": s.Singer,
+		"album":  s.Album,
+		"source": s.Source,
+	}
+}
+
+// Search 搜索歌曲。source 可为 tx/wy/kg/kw/mg 等，默认 wy。
 func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 	if query == "" {
 		return nil, fmt.Errorf("empty query")
 	}
 	if source == "" {
-		source = "tx"
+		source = "wy"
 	}
 	if page <= 0 {
 		page = 1
@@ -140,11 +158,6 @@ func (c *Client) Search(query, source string, page, limit int) ([]Song, error) {
 }
 
 // extractSongList 尝试多种响应结构，提取歌曲数组。
-// 兼容:
-//   {code, data:{list:[...]}}
-//   {list:[...]}
-//   {data:[...]}
-//   [...]
 func extractSongList(body []byte) []map[string]any {
 	var r1 struct {
 		Data struct {
@@ -197,6 +210,10 @@ func strField(m map[string]any, keys ...string) string {
 				}
 			case float64:
 				return strconv.FormatInt(int64(x), 10)
+			case int:
+				return strconv.Itoa(x)
+			case int64:
+				return strconv.FormatInt(x, 10)
 			}
 		}
 	}
@@ -234,26 +251,34 @@ func parseDuration(s string) int {
 // ============ 播放 URL ============
 
 // GetSongURL 通过 lxserver 拿到歌曲的真实播放地址。
-func (c *Client) GetSongURL(songID, source string) (string, error) {
-	if songID == "" {
-		return "", fmt.Errorf("empty songID")
+// songInfo 应该是 Search 返回的原始对象（Song.Raw），必须包含 source 字段。
+func (c *Client) GetSongURL(songInfo map[string]any, quality string) (string, error) {
+	if songInfo == nil {
+		return "", fmt.Errorf("nil songInfo")
 	}
-	if source == "" {
-		source = "tx"
+	src, _ := songInfo["source"].(string)
+	if src == "" {
+		return "", fmt.Errorf("songInfo.source is empty")
 	}
-	payload := map[string]string{
-		"source":  source,
-		"songId":  songID,
-		"quality": "320k",
+	if quality == "" {
+		quality = "320k"
 	}
-	body, err := c.post("/api/music/url", payload)
+
+	payload := map[string]any{
+		"songInfo": songInfo,
+		"quality":  quality,
+	}
+	headers := map[string]string{
+		"x-user-name": "open", // 公开用户，对应面板里的"自定义源归属用户"
+	}
+	body, err := c.post("/api/music/url", payload, headers)
 	if err != nil {
 		return "", err
 	}
 	if u := extractURL(body); u != "" {
 		return u, nil
 	}
-	return "", fmt.Errorf("cannot parse url from lx response: %s", truncate(string(body), 200))
+	return "", fmt.Errorf("cannot parse url from lx response: %s", truncate(string(body), 300))
 }
 
 func extractURL(body []byte) string {
@@ -277,6 +302,16 @@ func extractURL(body []byte) string {
 	if err := json.Unmarshal(body, &r3); err == nil && r3.URL != "" {
 		return r3.URL
 	}
+	// lxserver 有时返回 {success:true, data:{url:"..."}}
+	var r4 struct {
+		Success bool `json:"success"`
+		Data    struct {
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &r4); err == nil && r4.Success && r4.Data.URL != "" {
+		return r4.Data.URL
+	}
 	return ""
 }
 
@@ -287,7 +322,7 @@ func (c *Client) GetLyric(songID, source string) (string, error) {
 		return "", fmt.Errorf("empty songID")
 	}
 	if source == "" {
-		source = "tx"
+		source = "wy"
 	}
 	params := url.Values{}
 	params.Set("source", source)
