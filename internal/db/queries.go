@@ -38,7 +38,11 @@ type Song struct {
 	BPM         int    `json:"bpm"`
 }
 
+// 单表查询用，不带表别名
 const songColumns = `id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,cover_path,cover_art,lyrics,plays,track_number,disc_number,year,composer,bitrate,sample_rate,channels,file_size,isrc,bpm`
+
+// JOIN 查询用，列名带 s. 前缀，避免与 playlist_tracks.id 冲突
+const songColumnsAliased = `s.id,s.title,s.artist,s.album,s.album_artist,s.genre,s.fmt,s.dur,s.path,s.provider_id,s.cover_path,s.cover_art,s.lyrics,s.plays,s.track_number,s.disc_number,s.year,s.composer,s.bitrate,s.sample_rate,s.channels,s.file_size,s.isrc,s.bpm`
 
 func scanSong(rows interface{ Scan(...any) error }) (Song, error) {
 	var s Song
@@ -151,9 +155,10 @@ func (h *Holder) GetPlaylist(id string) (*Playlist, error) {
 	return &p, nil
 }
 
+// 修复：JOIN 时用 songColumnsAliased，避免 id 列歧义
 func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 	rows, err := h.DB.Query(`
-		SELECT `+songColumns+`
+		SELECT `+songColumnsAliased+`
 		FROM playlist_tracks pt JOIN songs s ON s.id = pt.song_id
 		WHERE pt.playlist_id=? ORDER BY pt.sort_order, pt.id`, id)
 	if err != nil {
@@ -174,7 +179,7 @@ func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 	return out, nil
 }
 
-// CreatePlaylist 加 public 参数
+// CreatePlaylist 增加 public 参数
 func (h *Holder) CreatePlaylist(name, comment, owner string, public bool) (string, error) {
 	id := newShortID("pl")
 	p := 0
@@ -216,6 +221,7 @@ func (h *Holder) AddSongsToPlaylist(plID string, songIDs []string) error {
 		return fmt.Errorf("playlist not found")
 	}
 
+	// 用 MAX(sort_order)+1 而不是 COUNT(*)，避免删歌后冲突
 	var next int
 	tx.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM playlist_tracks WHERE playlist_id=?`, plID).Scan(&next)
 	for i, sid := range songIDs {
@@ -281,6 +287,9 @@ func (h *Holder) RecentPlays(limit int) ([]map[string]any, error) {
 		rows.Scan(&id, &sid, &playedAt, &title, &artist)
 		out = append(out, map[string]any{"id": id, "song_id": sid, "played_at": playedAt, "title": title, "artist": artist})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -317,6 +326,9 @@ func (h *Holder) ListScanTasks(limit int) ([]map[string]any, error) {
 			"total": total, "processed": processed, "status": status,
 			"source": source, "created_at": created,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -363,7 +375,7 @@ func (h *Holder) DeleteSongs(ids []string) error {
 	}
 	defer tx.Rollback()
 
-	// 记录受影响的歌单，稍后更新计数
+	// 记录受影响的歌单，删完后更新它们的 song_count
 	var affected []string
 	if rows, err := tx.Query(`SELECT DISTINCT playlist_id FROM playlist_tracks WHERE song_id IN (`+ph+`)`, args...); err == nil {
 		for rows.Next() {
