@@ -24,7 +24,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            icezxf/musicon:latest
+            icezxf/musicon:aa
             icezxf/musicon:${{ github.sha }}
           platforms: linux/arm64
           cache-from: type=gha
