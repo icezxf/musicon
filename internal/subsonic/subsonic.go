@@ -6,14 +6,21 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/disintegration/imaging"
 
 	"github.com/icezxf/musicon-go/internal/alist"
 	"github.com/icezxf/musicon-go/internal/auth"
@@ -650,20 +657,34 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	typ := r.URL.Query().Get("type")
-	log.Printf("[getCoverArt] id=%s type=%s", id, typ)
+	sizeStr := r.URL.Query().Get("size")
+	size := 0
+	if sizeStr != "" {
+		if n, err := strconv.Atoi(sizeStr); err == nil && n > 0 && n <= 2000 {
+			size = n
+		}
+	}
 
-	// 艺术家头像
-	if typ == "artist" {
-		name := r.URL.Query().Get("artist_name")
-		if name == "" {
-			name = h.resolveArtistName(id)
-		}
-		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-			proxyImage(w, d.Pic)
-			return
-		}
+	// 找封面文件
+	coverPath := h.findCoverPath(id, typ)
+	if coverPath == "" {
 		http.Error(w, "not found", 404)
 		return
+	}
+
+	// 有 size 参数 → 返回缩略图
+	if size > 0 {
+		h.serveThumb(w, r, coverPath, size)
+		return
+	}
+	serveLocalCover(w, r, coverPath)
+}
+
+// findCoverPath 按 id + type 找封面文件路径
+func (h *Handler) findCoverPath(id, typ string) string {
+	// 艺术家头像（走 LX，不返回本地路径）
+	if typ == "artist" {
+		return "" // 由 getArtistImage 单独处理
 	}
 
 	// 专辑封面
@@ -671,41 +692,71 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		songs, _ := h.DB.ListSongs()
 		for _, s := range songs {
 			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
-				serveLocalCover(w, r, s.CoverPath)
-				return
+				return s.CoverPath
 			}
 		}
-		log.Printf("[getCoverArt] album %s 无封面", id)
-		http.Error(w, "not found", 404)
-		return
+		return ""
 	}
 
 	// 歌单封面
-	if typ == "playlist" {
-		songs, _ := h.DB.GetPlaylistSongs(id)
+	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
+		realID := strings.TrimPrefix(id, "pl-")
+		songs, _ := h.DB.GetPlaylistSongs(realID)
 		for _, s := range songs {
 			if s.CoverPath != "" {
-				serveLocalCover(w, r, s.CoverPath)
-				return
+				return s.CoverPath
 			}
 		}
-		http.Error(w, "not found", 404)
-		return
+		return ""
 	}
 
 	// 默认：歌曲封面
 	s, err := h.DB.GetSong(id)
 	if err != nil {
-		log.Printf("[getCoverArt] song %s 不存在", id)
+		return ""
+	}
+	return s.CoverPath
+}
+
+// serveThumb 生成/返回缩略图（磁盘缓存）
+func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
+	thumbDir := "/app/data/covers_thumb"
+	os.MkdirAll(thumbDir, 0755)
+
+	base := path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	thumbPath := fmt.Sprintf("%s/%s_%d.jpg", thumbDir, base, size)
+
+	// 命中缓存
+	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
+		http.ServeFile(w, r, thumbPath)
+		return
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
 		http.Error(w, "not found", 404)
 		return
 	}
-	log.Printf("[getCoverArt] song=%q cover_path=%q", s.Title, s.CoverPath)
-	if s.CoverPath == "" {
-		http.Error(w, "not found", 404)
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	if err != nil {
+		// 解码失败，回退到原图
+		serveLocalCover(w, r, path)
 		return
 	}
-	serveLocalCover(w, r, s.CoverPath)
+
+	thumb := imaging.Fill(img, size, size, imaging.Center, imaging.Lanczos)
+	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(85)); err != nil {
+		// 磁盘失败，直接返回内存
+		w.Header().Set("Content-Type", "image/jpeg")
+		imaging.Encode(w, thumb, imaging.JPEG, imaging.JPEGQuality(85))
+		return
+	}
+	http.ServeFile(w, r, thumbPath)
 }
 
 func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
@@ -842,27 +893,40 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	s, err := h.DB.GetSong(id)
 	if err != nil || s.Lyrics == "" {
+		log.Printf("[getLyricsBySongId] id=%s 无歌词", id)
 		h.writeOK(w, r, map[string]any{"lyricsList": map[string]any{"structuredLyrics": []any{}}})
 		return
 	}
+
 	lines := meta.ParseLRC(s.Lyrics)
+
+	// 判断是否有任何带时间戳的行（start >= 0 表示有时间戳）
+	hasTimestamp := false
+	for _, ln := range lines {
+		if ln.Start >= 0 {
+			hasTimestamp = true
+			break
+		}
+	}
+
 	var jsonLines []map[string]any
-	synced := false
 	for _, ln := range lines {
 		m := map[string]any{"@value": ln.Value}
-		if ln.Start > 0 {
+		if hasTimestamp && ln.Start >= 0 {
 			m["@start"] = ln.Start
-			synced = true
 		}
 		jsonLines = append(jsonLines, m)
 	}
+
+	log.Printf("[getLyricsBySongId] id=%s lines=%d synced=%v", id, len(jsonLines), hasTimestamp)
+
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
 				"@displayArtist": s.Artist,
 				"@displayTitle":  s.Title,
 				"@lang":          "zho",
-				"@synced":        synced,
+				"@synced":        hasTimestamp,
 				"line":           jsonLines,
 			}},
 		},
