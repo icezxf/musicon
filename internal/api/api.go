@@ -191,11 +191,13 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
-	// 元数据搜索/歌词
+	// LX 搜索/歌词/播放地址
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
 		h.metadataLyric(w, r)
+	case p == "/api/music/play-url" && r.Method == "POST":
+		h.musicPlayURL(w, r)
 
 	// 任务
 	case p == "/api/tasks" && r.Method == "GET":
@@ -217,9 +219,9 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
 
-	// LX
+	// LX 状态
 	case p == "/api/lx/status" && r.Method == "GET":
-		writeJSON(w, 200, map[string]any{"running": true, "url": h.Settings.GetLXURL()})
+		h.lxStatus(w, r)
 
 	default:
 		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
@@ -329,7 +331,6 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// 错误不再被吞掉
 func (h *Handler) patchPlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
 	var body map[string]any
@@ -554,28 +555,35 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------- 元数据搜索 / 歌词（转 LX） ----------
+// ---------- LX 搜索 / 歌词 / 播放地址 ----------
 
+// GET /api/music/metadata-search?keyword=xxx&source=tx&page=1&limit=30
 func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	kw := r.URL.Query().Get("keyword")
 	if kw == "" {
 		writeJSON(w, 400, map[string]any{"detail": "keyword required"})
 		return
 	}
-	lxURL := h.Settings.GetLXURL()
-	u := strings.TrimRight(lxURL, "/") + "/api/music/search?source=tx&name=" + url.QueryEscape(kw) + "&type=song"
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(u)
+	source := r.URL.Query().Get("source")
+	if source == "" {
+		source = "tx"
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	songs, err := h.LX.Search(kw, source, page, limit)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
-	var data any
-	json.NewDecoder(resp.Body).Decode(&data)
-	writeJSON(w, 200, map[string]any{"results": data})
+	writeJSON(w, 200, map[string]any{
+		"source":  source,
+		"count":   len(songs),
+		"results": songs,
+	})
 }
 
+// GET /api/music/metadata-lyric?source=tx&songId=xxx
 func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	songID := r.URL.Query().Get("songId")
@@ -583,18 +591,49 @@ func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "source and songId required"})
 		return
 	}
-	lxURL := h.Settings.GetLXURL()
-	u := strings.TrimRight(lxURL, "/") + "/api/music/lyric?source=" + url.QueryEscape(source) + "&songId=" + url.QueryEscape(songID)
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(u)
+	lyric, err := h.LX.GetLyric(songID, source)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
-	var data any
-	json.NewDecoder(resp.Body).Decode(&data)
-	writeJSON(w, 200, data)
+	writeJSON(w, 200, map[string]any{
+		"source": source,
+		"songId": songID,
+		"lyric":  lyric,
+	})
+}
+
+// POST /api/music/play-url
+// body: {"source":"tx","songId":"xxx"}
+func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Source string `json:"source"`
+		SongID string `json:"songId"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.SongID == "" {
+		writeJSON(w, 400, map[string]any{"detail": "songId required"})
+		return
+	}
+	u, err := h.LX.GetSongURL(body.SongID, body.Source)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"url": u})
+}
+
+// GET /api/lx/status —— 探测 LX 是否可达
+func (h *Handler) lxStatus(w http.ResponseWriter, r *http.Request) {
+	url := h.Settings.GetLXURL()
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(strings.TrimRight(url, "/") + "/api/music/search?source=tx&name=test&type=song&limit=1")
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"running": false, "url": url, "error": err.Error()})
+		return
+	}
+	resp.Body.Close()
+	writeJSON(w, 200, map[string]any{"running": resp.StatusCode == 200, "url": url, "status": resp.StatusCode})
 }
 
 // ---------- 任务 ----------
