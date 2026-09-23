@@ -210,10 +210,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .gcard-name{font-weight:500;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gcard-sub{font-size:12px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
 .card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px}
-.field{display:flex;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
-.field:last-child{border-bottom:0}
-.field-label{width:180px;color:var(--text-3);flex-shrink:0}
-.field-value{flex:1;word-break:break-all;color:var(--text-2)}
 .modal-bg{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.6);
   display:none;align-items:center;justify-content:center}
 .modal-bg.show{display:flex}
@@ -242,93 +238,39 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .card .input:focus,.card .select:focus{border-color:var(--accent)}
 .card .lbl{font-size:11px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
 .provider-card label{display:block}
-@media (max-width: 768px){
-  .sidebar{width:280px;box-shadow:4px 0 24px rgba(0,0,0,.5)}
-  .brand{padding:16px 14px 12px}
-  .brand-name{font-size:14px}
-  .nav-section{padding:10px 8px}
-  .nav-item{padding:11px 10px;font-size:14.5px}
-  .main{height:100vh;overflow:hidden}
-  .topbar{padding:12px 12px 8px;gap:8px;flex-wrap:wrap}
-  .topbar-title{font-size:16px;max-width:100%;flex:1 1 100%;margin-bottom:4px;order:-1}
-  .search-box{flex:1 1 100%;max-width:none;height:36px;order:1}
-  .topbar-actions{flex:1 1 100%;order:2;gap:6px}
-  .topbar-actions .select{flex:1;height:34px;font-size:12.5px;padding-left:8px}
-  #btn-menu{order:-2;display:flex !important}
-  .toolbar{padding:8px 12px;gap:8px;flex-wrap:wrap}
-  .sel-info{font-size:12.5px;flex:1 1 100%}
-  .toolbar-actions{flex:1 1 100%;justify-content:flex-start;gap:4px}
-  .btn-ghost{padding:6px 10px;font-size:12.5px}
-  #pager-slot{width:100%;order:3;margin-top:6px}
-  .pager{flex-wrap:wrap;justify-content:center}
-  .pager button{min-width:28px;height:26px;padding:0 6px;font-size:11.5px}
-  .pager .pg-info{font-size:11px;margin-left:4px}
-  .list-wrap{padding:0 8px 120px}
-  .list-header{display:none}
-  .row{
-    display:flex;flex-direction:column;
-    padding:12px;margin-bottom:6px;border-radius:10px;
-    background:var(--bg-1);border:1px solid var(--border);
-    grid-template-columns:none;gap:0;
-  }
-  .row.selected{background:var(--accent-soft);border-color:var(--accent)}
-  .row:hover{background:var(--bg-1)}
-  .row .col-chk{position:absolute;left:12px;top:12px;display:flex}
-  .row .col-cover{position:absolute;left:44px;top:12px;display:flex}
-  .row .col-play{position:absolute;right:12px;top:12px;display:flex}
-  .row{position:relative;min-height:68px}
-  .row .col-cover .cover{width:48px;height:48px;border-radius:8px}
-  .row .col-num{display:none}
-  .row .col-title{margin-left:104px;margin-right:44px;min-height:48px;display:flex;flex-direction:column;justify-content:center}
-  .row .col-title-text{font-size:14px;font-weight:500;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .row .col-artist{display:block;margin-left:104px;font-size:12px;color:var(--text-3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 104px)}
-  .row .col-album{display:block;margin-left:104px;font-size:11.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 104px)}
-  .row .col-dur{display:block;position:absolute;right:12px;bottom:12px;font-size:11.5px;color:var(--text-3)}
-  .row .col-prov{display:inline-flex;position:absolute;right:60px;bottom:12px;font-size:10.5px;height:18px;padding:0 6px}
-  .row .play-btn{width:36px;height:36px}
-  .row .play-btn svg{width:15px;height:15px}
-  .sidebar.open::after{content:"";position:fixed;left:280px;top:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:-1}
-  .actionbar{bottom:78px;left:12px;right:12px;transform:none;padding:10px 12px;gap:10px;max-width:none}
-  .actionbar.show{transform:none}
-  .actionbar-info{font-size:12.5px;flex:1}
-  .actionbar-btns{gap:6px}
-  .btn-primary,.btn-danger{padding:8px 12px;font-size:12.5px}
-  .player{padding:8px 10px;gap:10px;flex-wrap:wrap}
-  .player-info{flex:1 1 100%;gap:8px}
-  .player-cover{width:36px;height:36px}
-  .player-title{font-size:12.5px}
-  .player-artist{font-size:11px}
-  .player-ctrl{gap:4px}
-  .player-ctrl button{width:32px;height:32px}
-  .player-progress{flex:1 1 auto;font-size:11px;gap:6px}
-  .player-progress input[type=range]{min-width:60px}
-  .grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;padding:4px 0}
-  .gcard{padding:10px}
-  .gcard-avatar,.gcard-cover{font-size:24px}
-  .gcard-avatar-container{width:100%;aspect-ratio:1}
-  .gcard-avatar{width:80%;height:80%}
-  .gcard-name{font-size:12.5px}
-  .gcard-sub{font-size:10.5px}
-  .card{padding:12px 14px}
-  .field{font-size:12.5px;flex-direction:column;gap:2px;padding:8px 0}
-  .field-label{width:100%;font-size:11px}
-  .field-value{font-size:13px}
-  [data-section] .grid,[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important}
-  .lbl{font-size:11px}
-  .modal{padding:20px;width:calc(100vw - 32px);max-width:400px}
-  .modal-title{font-size:15px;margin-bottom:14px}
-  .modal .input,.modal .select{height:36px;font-size:13.5px}
-  .modal-actions{gap:8px}
-  .modal-actions .btn-primary,.modal-actions .btn-ghost{padding:8px 14px;font-size:13px}
-  .icon-btn{width:36px;height:36px}
-  #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
-  #view-artists, #view-albums{overflow-y:auto}
-}
 .scan-dir-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:6px;cursor:pointer;transition:background .1s}
 .scan-dir-item:hover{background:rgba(255,255,255,.05)}
 .scan-dir-item svg{flex-shrink:0;color:var(--accent)}
 .scan-dir-item .scan-dir-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .scan-dir-item .scan-dir-hint{color:var(--text-3);font-size:12px;flex-shrink:0}
+
+/* 在线搜索弹窗 */
+#online-modal .modal{width:min(900px,95vw);max-height:90vh;display:flex;flex-direction:column;padding:20px}
+#online-modal .online-header{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+#online-modal .online-header .input{flex:1;height:38px}
+#online-modal .online-body{flex:1;overflow-y:auto;min-height:200px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg-2)}
+#online-modal .online-row{display:grid;grid-template-columns:36px 44px 1fr 160px 160px 60px 80px;gap:10px;
+  padding:8px 12px;border-bottom:1px solid var(--border);align-items:center;transition:background .1s;cursor:pointer}
+#online-modal .online-row:hover{background:var(--bg-1)}
+#online-modal .online-row.selected{background:var(--accent-soft)}
+#online-modal .online-row:last-child{border-bottom:0}
+#online-modal .online-row .orow-cover{width:36px;height:36px;border-radius:4px;object-fit:cover;background:var(--bg-3)}
+#online-modal .online-row .orow-title{font-weight:500;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#online-modal .online-row .orow-artist,
+#online-modal .online-row .orow-album{color:var(--text-2);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#online-modal .online-row .orow-dur{color:var(--text-3);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
+#online-modal .online-row .orow-status{font-size:11.5px;text-align:center;color:var(--text-3)}
+#online-modal .online-row .orow-status.imported{color:var(--success)}
+#online-modal .online-footer{display:flex;gap:10px;align-items:center;margin-top:12px}
+#online-modal .online-footer .online-info{flex:1;font-size:13px;color:var(--text-2)}
+#online-modal .online-footer .online-info b{color:var(--accent-h)}
+@media (max-width:768px){
+  #online-modal .modal{width:100vw;height:100vh;max-height:100vh;border-radius:0;padding:16px}
+  #online-modal .online-row{grid-template-columns:32px 40px 1fr 60px}
+  #online-modal .online-row .orow-artist,
+  #online-modal .online-row .orow-album,
+  #online-modal .online-row .orow-status{display:none}
+}
 </style>
 </head>
 <body>
@@ -341,6 +283,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </a>
     </div>
+
     <div class="nav-section">
       <div class="nav-title">库</div>
       <div class="nav-item active" id="nav-all">
@@ -359,6 +302,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <span class="nav-count" id="count-albums">0</span>
       </div>
     </div>
+
     <div class="nav-section">
       <div class="nav-title">功能</div>
       <div class="nav-item" id="nav-tasks">
@@ -370,6 +314,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <span class="nav-label">设置</span>
       </div>
     </div>
+
     <div class="nav-section nav-playlists">
       <div class="nav-title">
         <span>歌单</span>
@@ -397,6 +342,9 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <input id="search" placeholder="搜索标题、艺术家、专辑…" autocomplete="off">
       </div>
       <div class="topbar-actions">
+        <button class="btn-ghost" id="btn-online-search" title="在线搜索并导入歌曲" style="height:38px">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>在线
+        </button>
         <button class="btn-primary" id="btn-add-songs-to-playlist" style="display:none" title="向当前歌单添加歌曲">+ 添加歌曲</button>
         <select class="select" id="f-provider"><option value="">全部音源</option></select>
         <select class="select" id="f-format"><option value="">全部格式</option></select>
@@ -407,7 +355,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
           <option value="200">每页 200</option>
           <option value="999999">全部</option>
         </select>
-        <select class="select" id="f-source"><option value="">全部来源</option><option value="local">本地文件</option><option value="virtual">在线榜单</option></select>
+        <select class="select" id="f-source"><option value="">全部来源</option><option value="local">本地文件</option><option value="virtual">在线歌曲</option></select>
       </div>
     </header>
 
@@ -503,6 +451,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </main>
 </div>
 
+<!-- 新建歌单弹窗 -->
 <div class="modal-bg" id="pl-modal">
   <div class="modal">
     <div class="modal-title">新建歌单</div>
@@ -525,6 +474,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   </div>
 </div>
 
+<!-- 新建扫描弹窗 -->
 <div class="modal-bg" id="scan-modal">
   <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
@@ -539,6 +489,34 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <button class="btn-ghost" id="scan-cancel">取消</button>
         <button class="btn-primary" id="scan-submit">选择此目录扫描</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 在线搜索弹窗（新增） -->
+<div class="modal-bg" id="online-modal">
+  <div class="modal">
+    <div class="modal-title">在线搜索歌曲</div>
+    <div class="online-header">
+      <input class="input" id="online-keyword" placeholder="输入歌名 / 歌手 / 专辑…" autocomplete="off">
+      <select class="select" id="online-source" style="width:110px">
+        <option value="wy">网易云</option>
+        <option value="tx">QQ音乐</option>
+        <option value="kg">酷狗</option>
+        <option value="kw">酷我</option>
+        <option value="mg">咪咕</option>
+      </select>
+      <button class="btn-primary" id="online-search-btn" style="height:38px">搜索</button>
+    </div>
+    <div class="online-body" id="online-body">
+      <div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">输入关键词后点"搜索"</div>
+    </div>
+    <div class="online-footer">
+      <div class="online-info">已选 <b id="online-cnt">0</b> / <b id="online-total">0</b> 首</div>
+      <button class="btn-ghost" id="online-select-all">全选</button>
+      <button class="btn-ghost" id="online-select-none">清空</button>
+      <button class="btn-ghost" id="online-close">关闭</button>
+      <button class="btn-primary" id="online-import">导入选中</button>
     </div>
   </div>
 </div>
@@ -560,6 +538,9 @@ const state = {
   pageSize: 50,
   filterArtist: null,
   filterAlbum: null,
+  // 在线搜索
+  onlineResults: [],
+  onlineSelected: new Set(),
 };
 
 async function api(path, opts){
@@ -652,7 +633,7 @@ function coverUrl(s){
 function initialOf(s){ const t = (s.title || '').trim(); return t ? t.charAt(0).toUpperCase() : '♪'; }
 function providerLabel(p){
   if (!p) return '';
-  if (p.startsWith('lxv-')) return '虚拟';
+  if (p.startsWith('lxv-') || p.startsWith('lx-')) return '在线';
   if (p.includes('alist')) return 'AList';
   return p;
 }
@@ -666,7 +647,7 @@ function currentList(){ return state.view === 'playlist' ? state.playlistTracks 
 function matchesFilter(s){
   if (state.filterArtist && splitArtists(combinedArtist(s)).indexOf(state.filterArtist) === -1) return false;
   if (state.filterAlbum && (s.album || '') !== state.filterAlbum) return false;
-  const isV = (s.fmt === 'VIRTUAL') || String(s.id || '').startsWith('lxv-');
+  const isV = isVirtual(s);
   const prov = $('#f-provider') ? $('#f-provider').value : '';
   const fmt = $('#f-format') ? $('#f-format').value : '';
   const src = $('#f-source') ? $('#f-source').value : '';
@@ -980,6 +961,8 @@ async function selectPlaylist(plId){
   switchMainView('songs');
   state.activePlaylistId = plId;
   state.view = 'playlist';
+  state.filterArtist = null;
+  state.filterAlbum = null;
   state.selected.clear();
   state.playlistTracks = [];
   renderSidebar();
@@ -1198,6 +1181,97 @@ async function scanLoadDir(path) {
     tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--danger);font-size:13px">加载失败：' + esc(e.message) + '</div>';
   }
 }
+
+/* ---------- 在线搜索 ---------- */
+
+function openOnlineModal(){
+  $('#online-modal').classList.add('show');
+  setTimeout(() => $('#online-keyword').focus(), 100);
+}
+
+function closeOnlineModal(){
+  $('#online-modal').classList.remove('show');
+}
+
+function renderOnlineResults(){
+  const box = $('#online-body');
+  const list = state.onlineResults;
+  if (!list.length){
+    box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">没有结果</div>';
+    return;
+  }
+  // 已有歌曲集合，用来判断"已导入"
+  const existing = new Set(state.songs.map(s => s.id));
+  box.innerHTML = list.map(function(s, i){
+    const vId = 'lxv-' + s.source + '-' + s.id;
+    const isIn = existing.has(vId);
+    const sel = state.onlineSelected.has(i);
+    const cov = s.cover
+      ? '<img class="orow-cover" src="' + esc(s.cover) + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
+      : '<div class="orow-cover"></div>';
+    return '<div class="online-row' + (sel ? ' selected' : '') + '" data-idx="' + i + '">'
+      + '<div class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
+      + cov
+      + '<div class="orow-title" title="' + esc(s.name) + '">' + esc(s.name) + '</div>'
+      + '<div class="orow-artist" title="' + esc(s.singer) + '">' + esc(s.singer) + '</div>'
+      + '<div class="orow-album" title="' + esc(s.album || '') + '">' + esc(s.album || '') + '</div>'
+      + '<div class="orow-dur">' + fmtDuration(s.duration) + '</div>'
+      + '<div class="orow-status' + (isIn ? ' imported' : '') + '">' + (isIn ? '已导入' : '') + '</div>'
+      + '</div>';
+  }).join('');
+  updateOnlineCounters();
+}
+
+function updateOnlineCounters(){
+  $('#online-cnt').textContent = state.onlineSelected.size;
+  $('#online-total').textContent = state.onlineResults.length;
+}
+
+async function doOnlineSearch(){
+  const kw = $('#online-keyword').value.trim();
+  if (!kw){ toast('请输入关键词', 'err'); return; }
+  const source = $('#online-source').value;
+  const box = $('#online-body');
+  box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">搜索中…</div>';
+  $('#online-search-btn').disabled = true;
+  try {
+    const d = await api('/api/music/metadata-search?keyword=' + encodeURIComponent(kw) + '&source=' + encodeURIComponent(source) + '&limit=50');
+    state.onlineResults = d.results || [];
+    state.onlineSelected.clear();
+    renderOnlineResults();
+  } catch(e){
+    box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);font-size:13px">搜索失败：' + esc(e.message) + '</div>';
+  } finally {
+    $('#online-search-btn').disabled = false;
+  }
+}
+
+async function importOnlineSelected(){
+  const ids = Array.from(state.onlineSelected);
+  if (!ids.length){ toast('请先勾选歌曲', 'err'); return; }
+  const songs = ids.map(i => state.onlineResults[i]).filter(Boolean).map(s => s.raw || s);
+  if (!songs.length){ toast('无可导入歌曲', 'err'); return; }
+  if (!confirm('确定导入 ' + songs.length + ' 首到音乐库？')) return;
+  $('#online-import').disabled = true;
+  try {
+    const r = await api('/api/music/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({songs: songs})
+    });
+    toast('导入成功 ' + (r.imported||0) + ' 首，跳过 ' + (r.skipped||0) + ' 首', 'ok');
+    state.onlineSelected.clear();
+    await loadSongs();
+    applyFilter();
+    renderOnlineResults();
+  } catch(e){
+    toast('导入失败：' + e.message, 'err');
+  } finally {
+    $('#online-import').disabled = false;
+  }
+}
+
+/* ---------- 设置 ---------- */
 
 function renderStorageForm(state){
   const providers = state.providers, defaultId = state.defaultId, statuses = state.statuses;
@@ -1829,6 +1903,31 @@ if ($('#page-size')) $('#page-size').addEventListener('change', function(){
 if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
+// 在线搜索入口
+$('#btn-online-search').addEventListener('click', openOnlineModal);
+$('#online-close').addEventListener('click', closeOnlineModal);
+$('#online-search-btn').addEventListener('click', doOnlineSearch);
+$('#online-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') doOnlineSearch(); });
+$('#online-select-all').addEventListener('click', () => {
+  state.onlineResults.forEach((_, i) => state.onlineSelected.add(i));
+  renderOnlineResults();
+});
+$('#online-select-none').addEventListener('click', () => {
+  state.onlineSelected.clear();
+  renderOnlineResults();
+});
+$('#online-import').addEventListener('click', importOnlineSelected);
+$('#online-modal').addEventListener('click', e => { if (e.target.id === 'online-modal') closeOnlineModal(); });
+$('#online-body').addEventListener('click', e => {
+  const row = e.target.closest('.online-row');
+  if (!row) return;
+  const idx = parseInt(row.dataset.idx, 10);
+  if (isNaN(idx)) return;
+  if (state.onlineSelected.has(idx)) state.onlineSelected.delete(idx); else state.onlineSelected.add(idx);
+  row.classList.toggle('selected', state.onlineSelected.has(idx));
+  updateOnlineCounters();
+});
+
 $('#btn-new-scan').addEventListener('click', function(){
   $('#scan-modal').classList.add('show');
   scanLoadDir(scanCurPath || '/');
@@ -1867,6 +1966,7 @@ document.addEventListener('keydown', e => {
     if (state.selected.size){ state.selected.clear(); render(); }
     $('#scan-modal').classList.remove('show');
     $('#pl-modal').classList.remove('show');
+    $('#online-modal').classList.remove('show');
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'a'){
     const tag = (e.target.tagName || '').toLowerCase();
