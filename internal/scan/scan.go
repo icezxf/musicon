@@ -52,7 +52,7 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 			continue
 		}
 		*total++
-		if err := s.probeAndSave(full, providerID, fmtName); err != nil {
+		if err := s.probeAndSave(full, providerID, fmtName, e.Size); err != nil {
 			log.Printf("[scan] probe %s: %v", full, err)
 			continue
 		}
@@ -64,7 +64,7 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 	s.DB.SetTaskProgress(taskID, *total, *processed)
 }
 
-func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string) error {
+func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize int64) error {
 	rawURL, err := s.AList.GetRawURL(fullPath)
 	if err != nil {
 		return err
@@ -73,7 +73,6 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string) error {
 	filename := path.Base(fullPath)
 
 	// 渐进式读取：1MB → 2MB → 4MB → 8MB
-	// 一旦解析出封面就停，避免对没封面的文件浪费带宽
 	var data []byte
 	var info *meta.Info
 	sizes := []int64{1 * 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}
@@ -126,6 +125,16 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string) error {
 		ProviderID:  providerID,
 		CoverPath:   coverPath,
 		Lyrics:      info.Lyrics,
+		TrackNumber: info.TrackNumber,
+		DiscNumber:  info.DiscNumber,
+		Year:        info.Year,
+		Composer:    info.Composer,
+		Bitrate:     info.Bitrate,
+		SampleRate:  info.SampleRate,
+		Channels:    info.Channels,
+		FileSize:    fileSize,
+		ISRC:        info.ISRC,
+		BPM:         info.BPM,
 	})
 }
 
@@ -150,5 +159,3 @@ func stableID(p string) string {
 	h := sha1.Sum([]byte(p))
 	return "go-" + hex.EncodeToString(h[:8])
 }
-
-var _ = log.Printf
