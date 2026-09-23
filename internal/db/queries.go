@@ -40,7 +40,6 @@ type Song struct {
 
 const songColumns = `id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,cover_path,cover_art,lyrics,plays,track_number,disc_number,year,composer,bitrate,sample_rate,channels,file_size,isrc,bpm`
 
-// JOIN 查询专用：带 s. 前缀，避免与 playlist_tracks.id 歧义
 const songColumnsAliased = `s.id,s.title,s.artist,s.album,s.album_artist,s.genre,s.fmt,s.dur,s.path,s.provider_id,s.cover_path,s.cover_art,s.lyrics,s.plays,s.track_number,s.disc_number,s.year,s.composer,s.bitrate,s.sample_rate,s.channels,s.file_size,s.isrc,s.bpm`
 
 func scanSong(rows interface{ Scan(...any) error }) (Song, error) {
@@ -154,7 +153,6 @@ func (h *Holder) GetPlaylist(id string) (*Playlist, error) {
 	return &p, nil
 }
 
-// 关键修复：JOIN 使用带 s. 前缀的列名，避免 id 歧义
 func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 	rows, err := h.DB.Query(`
 		SELECT `+songColumnsAliased+`
@@ -178,7 +176,6 @@ func (h *Holder) GetPlaylistSongs(id string) ([]Song, error) {
 	return out, nil
 }
 
-// CreatePlaylist 增加 public 参数
 func (h *Holder) CreatePlaylist(name, comment, owner string, public bool) (string, error) {
 	id := newShortID("pl")
 	p := 0
@@ -220,7 +217,6 @@ func (h *Holder) AddSongsToPlaylist(plID string, songIDs []string) error {
 		return fmt.Errorf("playlist not found")
 	}
 
-	// sort_order 用 MAX+1 而不是 COUNT，避免删歌后冲突
 	var next int
 	tx.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM playlist_tracks WHERE playlist_id=?`, plID).Scan(&next)
 	for i, sid := range songIDs {
@@ -374,7 +370,6 @@ func (h *Holder) DeleteSongs(ids []string) error {
 	}
 	defer tx.Rollback()
 
-	// 记录受影响的歌单，删完后更新 song_count
 	var affected []string
 	if rows, err := tx.Query(`SELECT DISTINCT playlist_id FROM playlist_tracks WHERE song_id IN (`+ph+`)`, args...); err == nil {
 		for rows.Next() {
@@ -394,4 +389,43 @@ func (h *Holder) DeleteSongs(ids []string) error {
 		tx.Exec(`UPDATE playlists SET song_count=(SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id=?), updated_at=CURRENT_TIMESTAMP WHERE id=?`, pid, pid)
 	}
 	return tx.Commit()
+}
+
+// ============ 歌手缓存 ============
+
+// LoadArtist 读取歌手缓存
+func (h *Holder) LoadArtist(name string) (string, string, string, time.Time, bool) {
+	row := h.DB.QueryRow(`SELECT pic, bio, source, updated_at FROM artist_cache WHERE name=?`, name)
+	var pic, bio, source, updated string
+	if err := row.Scan(&pic, &bio, &source, &updated); err != nil {
+		return "", "", "", time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", updated)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, updated)
+		if err != nil {
+			return "", "", "", time.Time{}, false
+		}
+	}
+	return pic, bio, source, t, true
+}
+
+// SaveArtist 写入/更新歌手缓存
+func (h *Holder) SaveArtist(name, pic, bio, source string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := h.DB.Exec(`
+		INSERT INTO artist_cache(name, pic, bio, source) VALUES(?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET
+			pic=excluded.pic, bio=excluded.bio, source=excluded.source,
+			updated_at=CURRENT_TIMESTAMP
+	`, name, pic, bio, source)
+	return err
+}
+
+// ClearArtistCache 清空某个歌手的缓存
+func (h *Holder) ClearArtistCache(name string) error {
+	_, err := h.DB.Exec(`DELETE FROM artist_cache WHERE name=?`, name)
+	return err
 }
