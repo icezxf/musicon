@@ -42,13 +42,12 @@ func main() {
 	holder := &db.Holder{DB: database}
 	settingsMgr := settings.New(database)
 	alistClient := alist.New(settingsMgr)
-	lxClient := lx.New(settingsMgr)
+	lxClient := lx.New(settingsMgr, holder) // ← 改动：多传 holder 做缓存
 
 	var bgWG sync.WaitGroup
 
 	mux := http.NewServeMux()
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(cfg.StaticDir))))
-	// 只暴露 covers 目录，不再暴露 DataDir（保护 musicon.db）
 	mux.Handle("/app/data/covers/", http.StripPrefix("/app/data/covers/",
 		http.FileServer(http.Dir(cfg.DataDir+"/covers"))))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +69,7 @@ func main() {
 		Handler:           recoverMiddleware(logMiddleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      0, // stream 是流式，不设限
+		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -84,7 +83,6 @@ func main() {
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("[shutdown] %v", err)
 		}
-		// 等后台 goroutine
 		done := make(chan struct{})
 		go func() { bgWG.Wait(); close(done) }()
 		select {
