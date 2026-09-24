@@ -32,17 +32,19 @@ import (
 	"github.com/icezxf/musicon-go/internal/db"
 	"github.com/icezxf/musicon-go/internal/lx"
 	"github.com/icezxf/musicon-go/internal/meta"
+	"github.com/icezxf/musicon-go/internal/ncm"
 )
 
 type Handler struct {
 	DB    *db.Holder
 	AList *alist.Client
 	LX    *lx.Client
+	NCM   *ncm.Client
 	Cfg   *config.Config
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config) *Handler {
-	return &Handler{DB: database, AList: a, LX: l, Cfg: c}
+func New(database *db.Holder, a *alist.Client, l *lx.Client, n *ncm.Client, c *config.Config) *Handler {
+	return &Handler{DB: database, AList: a, LX: l, NCM: n, Cfg: c}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -809,8 +811,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HEAD 本地返回元数据头（移动云 CDN 拒绝 HEAD）
-	// 关键：正确处理 Range 头，返回 206
+	// HEAD 本地返回元数据头（CDN 拒绝 HEAD）
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
 		w.Header().Set("Accept-Ranges", "bytes")
@@ -835,7 +836,19 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET：用 60 秒缓存减少 AList 往返
+	// 虚拟歌曲（LX 在线歌曲）：从 LX 拿真实 URL
+	if s.Fmt == "VIRTUAL" || strings.HasPrefix(s.ID, "lxv-") {
+		u, err := h.lxPlayURL(s)
+		if err != nil {
+			h.writeErr(w, r, 0, "在线歌曲播放需要 lxserver 配置自定义音源："+err.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, u, http.StatusFound)
+		return
+	}
+
+	// 网盘歌曲：302 到 CDN
 	rawURL, err := h.getCachedRawURL(s.ID, s.Path)
 	if err != nil {
 		h.writeErr(w, r, 0, err.Error())
@@ -855,7 +868,30 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
-// parseRangeHeader 解析 HTTP Range 头。仅支持单范围。
+// lxPlayURL 从虚拟歌曲 ID 反解出 source/songmid，调 LX 拿真实 URL
+func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
+	rest := strings.TrimPrefix(s.ID, "lxv-")
+	parts := strings.SplitN(rest, "-", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid virtual id: %s", s.ID)
+	}
+	source, midStr := parts[0], parts[1]
+
+	var mid any = midStr
+	if n, err := strconv.ParseInt(midStr, 10, 64); err == nil {
+		mid = n
+	}
+	songInfo := map[string]any{
+		"source":    source,
+		"songmid":   mid,
+		"name":      s.Title,
+		"singer":    s.Artist,
+		"albumName": s.Album,
+	}
+	return h.LX.GetSongURL(songInfo, "320k")
+}
+
+// parseRangeHeader 解析 HTTP Range 头
 func parseRangeHeader(h string, size int64) (int64, int64, bool) {
 	if !strings.HasPrefix(h, "bytes=") {
 		return 0, 0, false
@@ -917,6 +953,8 @@ func contentTypeForFmt(fmtName string) string {
 		return "audio/opus"
 	case "wav":
 		return "audio/wav"
+	case "virtual":
+		return "audio/mpeg"
 	}
 	return "audio/mpeg"
 }
@@ -939,6 +977,14 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = h.resolveArtistName(id)
 		}
+		// 优先 ncm
+		if h.NCM != nil && name != "" {
+			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+				proxyImage(w, d.Pic)
+				return
+			}
+		}
+		// 回退 lx
 		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
 			proxyImage(w, d.Pic)
 			return
@@ -959,13 +1005,10 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 	serveLocalCover(w, r, coverPath)
 }
 
-// findCoverPath 根据 id/type 定位封面文件路径
 func (h *Handler) findCoverPath(id, typ string) string {
 	if typ == "artist" {
 		return ""
 	}
-
-	// 专辑
 	if typ == "album" || strings.HasPrefix(id, "al-") {
 		songs, _ := h.DB.ListSongs()
 		for _, s := range songs {
@@ -975,20 +1018,11 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		}
 		return ""
 	}
-
-	// 歌单：归一化 pl- 前缀
-	//   "pl-xxx"    → "pl-xxx"
-	//   "pl-pl-xxx" → "pl-xxx"
-	//   "xxx"       → "pl-xxx"
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		base := id
-		for strings.HasPrefix(base, "pl-") {
-			base = strings.TrimPrefix(base, "pl-")
+		realID := id
+		for strings.HasPrefix(realID, "pl-") {
+			realID = strings.TrimPrefix(realID, "pl-")
 		}
-		if base == "" {
-			return ""
-		}
-		realID := "pl-" + base
 		songs, _ := h.DB.GetPlaylistSongs(realID)
 		for _, s := range songs {
 			if s.CoverPath != "" {
@@ -997,8 +1031,6 @@ func (h *Handler) findCoverPath(id, typ string) string {
 		}
 		return ""
 	}
-
-	// 单曲
 	s, err := h.DB.GetSong(id)
 	if err != nil {
 		return ""
@@ -1070,7 +1102,7 @@ func proxyImage(w http.ResponseWriter, url string) {
 		http.Error(w, "bad url", 400)
 		return
 	}
-	req.Header.Set("Referer", "https://y.qq.com/")
+	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1096,7 +1128,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request) {
 			"@public":    p.Public,
 			"@songCount": p.Count,
 			"@duration":  p.Duration,
-			"@coverArt":  p.ID, // 修复：p.ID 已经是 pl-xxx，不要再加前缀
+			"@coverArt":  p.ID,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 		})
@@ -1126,7 +1158,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 			"@public":    p.Public,
 			"@songCount": len(entries),
 			"@duration":  totalDur,
-			"@coverArt":  p.ID, // 修复：同上
+			"@coverArt":  p.ID,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 			"entry":      entries,
@@ -1263,12 +1295,28 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, key stri
 	name := h.resolveArtistName(id)
 	bio := ""
 	hasPic := false
+
 	if name != "" {
-		if d, err := h.LX.GetSingerDetail(name); err == nil {
-			bio = d.Bio
-			hasPic = d.Pic != ""
+		// 优先 ncm
+		if h.NCM != nil {
+			if d, err := h.NCM.GetArtistDetail(name); err == nil {
+				bio = d.Bio
+				hasPic = d.Pic != ""
+			}
+		}
+		// 回退 lx
+		if !hasPic && bio == "" {
+			if d, err := h.LX.GetSingerDetail(name); err == nil {
+				if bio == "" {
+					bio = d.Bio
+				}
+				if !hasPic {
+					hasPic = d.Pic != ""
+				}
+			}
 		}
 	}
+
 	base := scheme + "://" + host
 	small := ""
 	if hasPic {
@@ -1328,6 +1376,16 @@ func (h *Handler) resolveArtistName(id string) string {
 func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	name := h.resolveArtistName(id)
+
+	// 优先 ncm
+	if h.NCM != nil && name != "" {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+			proxyImage(w, d.Pic)
+			return
+		}
+	}
+
+	// 回退 lx
 	if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
 		proxyImage(w, d.Pic)
 		return
@@ -1463,6 +1521,12 @@ func songToMap(s *db.Song) map[string]any {
 		ct = "audio/opus"
 	case "wav":
 		ct = "audio/wav"
+	case "virtual":
+		ct = "audio/mpeg"
+	}
+	suffix := strings.ToLower(s.Fmt)
+	if suffix == "virtual" {
+		suffix = "mp3"
 	}
 	aID := albumID(s.Album, s.Artist)
 	arID := artistID(s.Artist)
@@ -1494,7 +1558,7 @@ func songToMap(s *db.Song) map[string]any {
 		"@coverArt":           coverArt,
 		"@size":               s.FileSize,
 		"@contentType":        ct,
-		"@suffix":             strings.ToLower(s.Fmt),
+		"@suffix":             suffix,
 		"@duration":           s.Dur,
 		"@bitRate":            s.Bitrate,
 		"@path":               s.Path,
