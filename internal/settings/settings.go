@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+	"strconv"
 )
 
 type Manager struct {
@@ -150,4 +151,27 @@ func (m *Manager) GetLXURL() string {
 		return v
 	}
 	return "http://127.0.0.1:9527"
+}
+
+func (m *Manager) GetNCMMode() string {
+	if v := m.Get("ncm_mode"); v != "" {
+		return v
+	}
+	return "internal" // 默认内置
+}
+
+func (m *Manager) GetNCMEmbeddedPort() int {
+	if v := m.Get("ncm_embedded_port"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 3000
+}
+
+func (m *Manager) GetNCMURL() string {
+	if v := m.Get("ncm_server_url"); v != "" {
+		return v
+	}
+	return "http://127.0.0.1:3000"
 }
