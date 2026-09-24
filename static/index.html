@@ -96,7 +96,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .btn-ghost.danger{color:var(--danger)}
 .btn-ghost.danger:hover{background:rgba(239,68,68,.12);color:var(--danger-h)}
 
-/* 艺术家头部：头像左浮动，名字/简介/来源作为块级元素自然环绕 */
 .artist-header{padding:20px 12px 24px;border-bottom:1px solid var(--border);margin-bottom:8px}
 .artist-header::after{content:"";display:table;clear:both}
 .artist-header-avatar{float:left;width:120px;height:120px;border-radius:50%;
@@ -257,7 +256,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .scan-dir-item .scan-dir-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .scan-dir-item .scan-dir-hint{color:var(--text-3);font-size:12px;flex-shrink:0}
 
-/* 在线搜索弹窗 */
 #online-modal .modal{width:min(900px,95vw);max-height:90vh;display:flex;flex-direction:column;padding:20px}
 #online-modal .online-header{display:flex;gap:8px;align-items:center;margin-bottom:14px}
 #online-modal .online-header .input{flex:1;height:38px}
@@ -786,13 +784,11 @@ function renderArtistLinks(s){
   }).join('、');
 }
 
-/* ---------- 艺术家头部 ---------- */
 let _lastArtistHeaderName = null;
 async function renderArtistHeader(){
   const box = document.getElementById('artist-header');
   if (!box) return;
 
-  // 非 artist 视图：无条件隐藏并清空（避免残留）
   if (state.view !== 'artist' || !state.filterArtist){
     if (box.style.display !== 'none' || box.innerHTML !== ''){
       box.style.display = 'none';
@@ -807,8 +803,6 @@ async function renderArtistHeader(){
 
   const name = state.filterArtist;
   const initial = name.charAt(0).toUpperCase();
-
-  // 直接让三个块级元素作为 artist-header 子元素，配合 float 头像 → 文字环绕
   box.style.display = '';
   box.innerHTML =
     '<div class="artist-header-avatar" id="artist-header-avatar">' + esc(initial) + '</div>'
@@ -1620,6 +1614,14 @@ async function loadSettings(){
     box.innerHTML = ''
       + renderStorageForm(window.__providerState)
       + renderSubsonicPanel(users)
+      + renderFormSection('NCM 音源', [
+          { key: 'ncm_mode', label: '模式', value: st.ncm_mode || 'internal', type: 'select', options: [
+              { value: 'internal', label: '内置（使用打包的 ncm-server）' },
+              { value: 'external', label: '外部（连接已有的 ncm-api-rs 服务）' }
+            ]},
+          { key: 'ncm_embedded_port', label: '内置端口（仅内置模式生效）', value: st.ncm_embedded_port || '3000', placeholder: '3000' },
+          { key: 'ncm_server_url', label: '服务地址（仅外部模式生效）', value: st.ncm_server_url || '', placeholder: 'http://ncm-api:3000' }
+        ], 'ncm')
       + renderFormSection('LX 音源', [
           { key: 'lx_server_url', label: '服务地址', value: st.lx_server_url, placeholder: 'http://127.0.0.1:9527' },
           { key: 'lx_custom_source_username', label: '自定义源归属用户', value: st.lx_custom_source_username, placeholder: 'open' }
@@ -1691,7 +1693,7 @@ function bindSectionSaves(){
     btn.addEventListener('click', async function(){
       const id = btn.dataset.section;
       let data = collectSection(id);
-      ['range_size_kb','cache_ttl_min','cache_max_gb'].forEach(function(k){
+      ['range_size_kb','cache_ttl_min','cache_max_gb','ncm_embedded_port'].forEach(function(k){
         if (k in data && data[k] !== '') data[k] = parseInt(data[k], 10) || 0;
       });
       if (data.subsonic_pass === '') delete data.subsonic_pass;
@@ -1701,7 +1703,7 @@ function bindSectionSaves(){
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify(data)
         });
-        toast('已保存', 'ok');
+        toast('已保存，切换 NCM 模式需重启容器生效', 'ok');
         await loadSettings();
       } catch (e){
         toast('保存失败：' + e.message, 'err');
@@ -2200,7 +2202,6 @@ async function boot(){
         state.view = 'playlist';
         await loadPlaylistTracks(saved.activePlaylistId);
       } else {
-        // 上次是 artist 视图：不恢复
         state.view = 'all';
         state.filterArtist = null;
       }
