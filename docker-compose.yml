@@ -9,9 +9,7 @@ services:
     environment:
       LISTEN: "0.0.0.0:8000"
       DB_PATH: "/app/data/musicon.db"
-      WEB_USER: "fire"
-      WEB_PASS: "boc81838"
-      AListURL: "http://172.17.0.1:5244"
-      LXServerURL: "http://172.17.0.1:9527"
+      WEB_USER: "re"
+      WEB_PASS: "bo18"
     volumes:
       - ./data:/app/data
