@@ -25,6 +25,7 @@ import (
 	"github.com/icezxf/musicon-go/internal/config"
 	"github.com/icezxf/musicon-go/internal/db"
 	"github.com/icezxf/musicon-go/internal/lx"
+	"github.com/icezxf/musicon-go/internal/ncm"
 	"github.com/icezxf/musicon-go/internal/scan"
 	"github.com/icezxf/musicon-go/internal/settings"
 )
@@ -33,23 +34,27 @@ type Handler struct {
 	DB       *db.Holder
 	AList    *alist.Client
 	LX       *lx.Client
+	NCM      *ncm.Client
 	Cfg      *config.Config
 	Settings *settings.Manager
 	Scan     *scan.Scanner
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, c *config.Config, s *settings.Manager, bgWG *sync.WaitGroup) *Handler {
+func New(database *db.Holder, a *alist.Client, l *lx.Client, n *ncm.Client, c *config.Config, s *settings.Manager, bgWG *sync.WaitGroup) *Handler {
 	sc := &scan.Scanner{DB: database, AList: a, CoverDir: c.DataDir + "/covers", WG: bgWG}
-	return &Handler{DB: database, AList: a, LX: l, Cfg: c, Settings: s, Scan: sc}
+	return &Handler{DB: database, AList: a, LX: l, NCM: n, Cfg: c, Settings: s, Scan: sc}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
+	// 公开接口
 	mux.HandleFunc("/api/web-auth/login", h.login)
 	mux.HandleFunc("/api/web-auth/logout", h.logout)
 	mux.HandleFunc("/api/web-auth/session", h.session)
 	mux.HandleFunc("/api/artist/image", h.artistImage)
 	mux.HandleFunc("/api/covers/thumb/", h.coverThumb)
 	mux.HandleFunc("GET /api/songs/{id}/stream", h.songStream)
+
+	// 需要会话
 	mux.HandleFunc("/api/", h.authWrap(h.handle))
 }
 
@@ -103,8 +108,6 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 
 // lxPlayURL 尝试通过 lxserver 解析虚拟歌曲的真实播放地址
 func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
-	// 从 ID 反解 source 和 songmid
-	// ID 格式：lxv-{source}-{songmid}
 	rest := strings.TrimPrefix(s.ID, "lxv-")
 	parts := strings.SplitN(rest, "-", 2)
 	if len(parts) != 2 {
@@ -112,17 +115,16 @@ func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
 	}
 	source, midStr := parts[0], parts[1]
 
-	// songmid 尽量用数字，lxserver 对 wy/tx 要数字
 	var mid any = midStr
 	if n, err := strconv.ParseInt(midStr, 10, 64); err == nil {
 		mid = n
 	}
 
 	songInfo := map[string]any{
-		"source":  source,
-		"songmid": mid,
-		"name":    s.Title,
-		"singer":  s.Artist,
+		"source":    source,
+		"songmid":   mid,
+		"name":      s.Title,
+		"singer":    s.Artist,
 		"albumName": s.Album,
 	}
 	return h.LX.GetSongURL(songInfo, "320k")
@@ -226,9 +228,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	// 艺术家
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
-	case p == "/api/artist/photo" && r.Method == "GET":
-		h.artistPhoto(w, r)
-	case p == "/api/artist/refresh" && r.Method == "POST":   // ← 新增
+	case p == "/api/artist/refresh" && r.Method == "POST":
 		h.artistRefresh(w, r)
 
 	// AList 目录树
@@ -265,7 +265,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
 
-	// LX 状态
+	// LX / NCM 状态
 	case p == "/api/lx/status" && r.Method == "GET":
 		h.lxStatus(w, r)
 
@@ -477,6 +477,22 @@ func (h *Handler) deleteSubUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
+	if name == "" {
+		writeJSON(w, 400, map[string]any{"detail": "name required"})
+		return
+	}
+
+	// 优先走 ncm
+	if h.NCM != nil {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil && (d.Pic != "" || d.Bio != "") {
+			writeJSON(w, 200, map[string]any{
+				"name": d.Name, "pic": d.Pic, "bio": d.Bio, "source": "ncm",
+			})
+			return
+		}
+	}
+
+	// 回退 lxserver
 	d, err := h.LX.GetSingerDetail(name)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"name": name, "pic": "", "bio": "", "source": "none"})
@@ -485,20 +501,61 @@ func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"name": d.Name, "pic": d.Pic, "bio": d.Bio, "source": d.Source})
 }
 
+func (h *Handler) artistRefresh(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" {
+		writeJSON(w, 400, map[string]any{"detail": "name required"})
+		return
+	}
+	d, err := h.LX.RefreshSingerDetail(body.Name)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":     true,
+		"name":   d.Name,
+		"pic":    d.Pic,
+		"source": d.Source,
+	})
+}
+
 func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "not found", 404)
+		return
+	}
+
+	// 优先走 ncm
+	if h.NCM != nil {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+			proxyImageURL(w, d.Pic)
+			return
+		}
+	}
+
+	// 回退 lxserver
 	d, err := h.LX.GetSingerDetail(name)
 	if err != nil || d.Pic == "" {
 		http.Error(w, "not found", 404)
 		return
 	}
+	proxyImageURL(w, d.Pic)
+}
+
+// proxyImageURL 图片代理（网易云图床带 Referer 才不 403）
+func proxyImageURL(w http.ResponseWriter, rawURL string) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", d.Pic, nil)
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
 		http.Error(w, "bad url", 400)
 		return
 	}
-	req.Header.Set("Referer", "https://y.qq.com/")
+	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -603,7 +660,6 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 
 // ---------- LX 搜索 / 歌词 / 播放地址 / 导入库 ----------
 
-// GET /api/music/metadata-search?keyword=xxx&source=wy&page=1&limit=30
 func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	kw := r.URL.Query().Get("keyword")
 	if kw == "" {
@@ -654,7 +710,6 @@ func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/music/metadata-lyric?source=wy&songId=xxx
 func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	songID := r.URL.Query().Get("songId")
@@ -674,7 +729,6 @@ func (h *Handler) metadataLyric(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /api/music/play-url
 func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SongInfo map[string]any `json:"songInfo"`
@@ -685,6 +739,27 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "songInfo required"})
 		return
 	}
+
+	src, _ := body.SongInfo["source"].(string)
+
+	// 网易云源：优先走 ncm
+	if src == "wy" && h.NCM != nil {
+		songID := ""
+		if v, ok := body.SongInfo["id"]; ok {
+			songID = fmt.Sprintf("%v", v)
+		}
+		if songID == "" {
+			songID = fmt.Sprintf("%v", body.SongInfo["songmid"])
+		}
+		if songID != "" {
+			if u, err := h.NCM.GetSongURL(songID); err == nil && u != "" {
+				writeJSON(w, 200, map[string]any{"url": u})
+				return
+			}
+		}
+	}
+
+	// 其他源或 ncm 不可用：走 lxserver
 	u, err := h.LX.GetSongURL(body.SongInfo, body.Quality)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
@@ -693,9 +768,6 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"url": u})
 }
 
-// POST /api/music/import
-// body: {"songs": [{raw 对象}, ...]}
-// 把 LX 搜索结果作为虚拟歌曲导入库
 func (h *Handler) musicImport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Songs []map[string]any `json:"songs"`
@@ -721,22 +793,29 @@ func (h *Handler) musicImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"imported": imported, "skipped": skipped})
 }
 
-// GET /api/lx/status —— 探测 LX 是否可达
 func (h *Handler) lxStatus(w http.ResponseWriter, r *http.Request) {
-	url := h.Settings.GetLXURL()
-	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Get(strings.TrimRight(url, "/") + "/api/music/search?source=wy&name=test&type=song&limit=1")
-	if err != nil {
-		writeJSON(w, 200, map[string]any{"running": false, "url": url, "error": err.Error()})
-		return
+	lxURL := h.Settings.GetLXURL()
+	ncmURL := h.Settings.GetNCMURL()
+
+	lxOK := false
+	if resp, err := http.Get(strings.TrimRight(lxURL, "/") + "/api/music/search?source=wy&name=test&type=song&limit=1"); err == nil {
+		lxOK = resp.StatusCode == 200
+		resp.Body.Close()
 	}
-	resp.Body.Close()
-	writeJSON(w, 200, map[string]any{"running": resp.StatusCode == 200, "url": url, "status": resp.StatusCode})
+
+	ncmOK := false
+	if h.NCM != nil {
+		ncmOK = h.NCM.IsAvailable()
+	}
+
+	writeJSON(w, 200, map[string]any{
+		"lx":  map[string]any{"running": lxOK, "url": lxURL},
+		"ncm": map[string]any{"running": ncmOK, "url": ncmURL},
+	})
 }
 
 // ---------- LX → db.Song 转换 ----------
 
-// lxToSong 把 LX 搜索结果的原始对象转换成 db.Song
 func lxToSong(raw map[string]any) *db.Song {
 	source, _ := raw["source"].(string)
 	if source == "" {
@@ -770,7 +849,6 @@ func lxToSong(raw map[string]any) *db.Song {
 	}
 }
 
-// lxMidOf 从 LX 搜索结果里取唯一 ID
 func lxMidOf(raw map[string]any) string {
 	for _, k := range []string{"songmid", "songId", "id", "mid", "hash"} {
 		if v, ok := raw[k]; ok {
@@ -946,29 +1024,4 @@ func toStrings(a []any) []string {
 		}
 	}
 	return out
-}
-
-// POST /api/artist/refresh
-// body: {"name":"周杰伦"}
-// 强制刷新歌手缓存
-func (h *Handler) artistRefresh(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-	if body.Name == "" {
-		writeJSON(w, 400, map[string]any{"detail": "name required"})
-		return
-	}
-	d, err := h.LX.RefreshSingerDetail(body.Name)
-	if err != nil {
-		writeJSON(w, 502, map[string]any{"detail": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{
-		"ok":     true,
-		"name":   d.Name,
-		"pic":    d.Pic,
-		"source": d.Source,
-	})
 }
