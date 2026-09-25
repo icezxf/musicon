@@ -140,8 +140,12 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getPlaylists(w, r)
 	case "getPlaylist":
 		h.getPlaylist(w, r)
+	case "createPlaylist":
+		h.createPlaylist(w, r)
 	case "updatePlaylist":
 		h.updatePlaylist(w, r)
+	case "deletePlaylist":
+		h.deletePlaylist(w, r)
 	case "getLyrics":
 		h.getLyricsLegacy(w, r)
 	case "getLyricsBySongId":
@@ -862,9 +866,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
-	if s.FileSize > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(s.FileSize, 10))
-	}
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
@@ -1166,6 +1167,84 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// createPlaylist 支持：
+//   1. 传 playlistId + songId[] → 往已有歌单添加歌曲
+//   2. 只传 name（+可选 songId[]）→ 新建歌单
+func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+
+	plID := r.FormValue("playlistId")
+	name := r.FormValue("name")
+	songIDs := r.Form["songId"]
+	if len(songIDs) == 0 {
+		songIDs = r.URL.Query()["songId"]
+	}
+
+	// 场景 1：往已有歌单添加歌曲
+	if plID != "" {
+		p, err := h.DB.GetPlaylist(plID)
+		if err != nil {
+			h.writeErr(w, r, 70, "Playlist not found")
+			return
+		}
+		if len(songIDs) > 0 {
+			_ = h.DB.AddSongsToPlaylist(plID, songIDs)
+		}
+		songs, _ := h.DB.GetPlaylistSongs(plID)
+		totalDur := 0
+		for i := range songs {
+			totalDur += songs[i].Dur
+		}
+		h.writeOK(w, r, map[string]any{"playlist": map[string]any{
+			"@id":        p.ID,
+			"@name":      p.Name,
+			"@owner":     p.Owner,
+			"@public":    p.Public,
+			"@songCount": len(songs),
+			"@duration":  totalDur,
+			"@coverArt":  p.ID,
+			"@created":   "2024-01-01T00:00:00.000Z",
+			"@changed":   "2024-01-01T00:00:00.000Z",
+		}})
+		return
+	}
+
+	// 场景 2：新建歌单
+	if name == "" {
+		h.writeErr(w, r, 10, "Required parameter is missing: name")
+		return
+	}
+	id, err := h.DB.CreatePlaylist(name, "", "admin", false)
+	if err != nil {
+		h.writeErr(w, r, 0, err.Error())
+		return
+	}
+	if len(songIDs) > 0 {
+		_ = h.DB.AddSongsToPlaylist(id, songIDs)
+	}
+	p, err := h.DB.GetPlaylist(id)
+	if err != nil {
+		h.writeErr(w, r, 0, err.Error())
+		return
+	}
+	songs, _ := h.DB.GetPlaylistSongs(id)
+	totalDur := 0
+	for i := range songs {
+		totalDur += songs[i].Dur
+	}
+	h.writeOK(w, r, map[string]any{"playlist": map[string]any{
+		"@id":        p.ID,
+		"@name":      p.Name,
+		"@owner":     p.Owner,
+		"@public":    p.Public,
+		"@songCount": len(songs),
+		"@duration":  totalDur,
+		"@coverArt":  p.ID,
+		"@created":   "2024-01-01T00:00:00.000Z",
+		"@changed":   "2024-01-01T00:00:00.000Z",
+	}})
+}
+
 func (h *Handler) updatePlaylist(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 	id := r.FormValue("playlistId")
@@ -1176,25 +1255,55 @@ func (h *Handler) updatePlaylist(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, 70, "Playlist not found")
 		return
 	}
-	if r.Form != nil {
-		if add := r.Form["songIdToAdd"]; len(add) > 0 {
-			h.DB.AddSongsToPlaylist(id, add)
+
+	// 重命名 / 改注释 / 改公开状态
+	if name := r.FormValue("name"); name != "" {
+		h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, name, id)
+	}
+	if comment := r.FormValue("comment"); comment != "" {
+		h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, comment, id)
+	}
+	if pub := r.FormValue("public"); pub != "" {
+		b := 0
+		if pub == "true" {
+			b = 1
 		}
-		if rem := r.Form["songIdToRemove"]; len(rem) > 0 {
-			h.DB.RemoveSongsFromPlaylist(id, rem)
-		}
-		if idxs := r.Form["songIndexToRemove"]; len(idxs) > 0 {
-			songs, _ := h.DB.GetPlaylistSongs(id)
-			var ids []string
-			for _, s := range idxs {
-				if n, err := strconv.Atoi(s); err == nil && n >= 0 && n < len(songs) {
-					ids = append(ids, songs[n].ID)
-				}
+		h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id)
+	}
+
+	if add := r.Form["songIdToAdd"]; len(add) > 0 {
+		_ = h.DB.AddSongsToPlaylist(id, add)
+	}
+	if rem := r.Form["songIdToRemove"]; len(rem) > 0 {
+		_ = h.DB.RemoveSongsFromPlaylist(id, rem)
+	}
+	if idxs := r.Form["songIndexToRemove"]; len(idxs) > 0 {
+		songs, _ := h.DB.GetPlaylistSongs(id)
+		var ids []string
+		for _, s := range idxs {
+			if n, err := strconv.Atoi(s); err == nil && n >= 0 && n < len(songs) {
+				ids = append(ids, songs[n].ID)
 			}
-			if len(ids) > 0 {
-				h.DB.RemoveSongsFromPlaylist(id, ids)
-			}
 		}
+		if len(ids) > 0 {
+			_ = h.DB.RemoveSongsFromPlaylist(id, ids)
+		}
+	}
+	h.writeOK(w, r, map[string]any{})
+}
+
+func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("id")
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
+	if id == "" {
+		h.writeErr(w, r, 10, "Required parameter is missing: id")
+		return
+	}
+	if err := h.DB.DeletePlaylist(id); err != nil {
+		h.writeErr(w, r, 0, err.Error())
+		return
 	}
 	h.writeOK(w, r, map[string]any{})
 }
