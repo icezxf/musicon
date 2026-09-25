@@ -11,7 +11,7 @@ RUN go mod tidy && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /musicon
 
 # 运行阶段
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+#RUN apk add --no-cache #ca-certificates tzdata
 
 WORKDIR /app
 COPY --from=builder /musicon-go /app/musicon-go
