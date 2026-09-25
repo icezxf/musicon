@@ -19,6 +19,7 @@ import (
 var audioExts = map[string]string{
 	".mp3": "MP3", ".flac": "FLAC", ".m4a": "M4A", ".aac": "AAC",
 	".ogg": "OGG", ".opus": "OPUS", ".wav": "WAV",
+	".wma": "WMA", ".asf": "WMA",
 }
 
 type Scanner struct {
