@@ -198,6 +198,8 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.listSongs(w, r)
 	case p == "/api/songs" && r.Method == "DELETE":
 		h.deleteSongs(w, r)
+	case strings.HasPrefix(p, "/api/songs/") && strings.HasSuffix(p, "/lyric") && r.Method == "GET":
+		h.songLyric(w, r)
 	case strings.HasPrefix(p, "/api/songs/") && r.Method == "GET":
 		h.getSong(w, r)
 	case strings.HasPrefix(p, "/api/songs/") && r.Method == "PUT":
@@ -293,6 +295,25 @@ func (h *Handler) getSong(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"song": s})
+}
+
+func (h *Handler) songLyric(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/songs/")
+	id := strings.TrimSuffix(rest, "/lyric")
+	if id == "" {
+		writeJSON(w, 400, map[string]any{"detail": "missing id"})
+		return
+	}
+	s, err := h.DB.GetSong(id)
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"detail": "Song not found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"id":    id,
+		"title": s.Title,
+		"lyric": s.Lyrics,
+	})
 }
 
 func (h *Handler) updateSong(w http.ResponseWriter, r *http.Request) {
