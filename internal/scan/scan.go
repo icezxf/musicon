@@ -22,6 +22,11 @@ var audioExts = map[string]string{
 	".wma": "WMA", ".asf": "WMA",
 }
 
+// noTagFormats 这些格式不支持标签解析，扫描时直接走文件名 fallback，不读文件内容
+var noTagFormats = map[string]bool{
+	"WMA": true,
+}
+
 type Scanner struct {
 	DB       *db.Holder
 	AList    *alist.Client
@@ -86,9 +91,35 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 
 	filename := path.Base(fullPath)
 
+	// 这些格式不支持标签解析，直接走文件名 fallback，不读文件内容
+	if noTagFormats[fmtName] {
+		title := strings.TrimSuffix(filename, filepath.Ext(filename))
+		artist := ""
+		if m := splitFilename(filename); m != nil {
+			artist, title = m[0], m[1]
+		}
+		log.Printf("[probe] %s ⊘ %s 无标签格式，直接入库 (title=%s artist=%s)",
+			filename, fmtName, title, artist)
+		return s.DB.UpsertSong(db.Song{
+			ID:         stableID(fullPath),
+			Title:      title,
+			Artist:     artist,
+			Fmt:        fmtName,
+			Path:       fullPath,
+			ProviderID: providerID,
+			FileSize:   fileSize,
+		})
+	}
+
 	var data []byte
 	var info *meta.Info
-	sizes := []int64{1 * 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}
+	sizes := []int64{
+		1 * 1024 * 1024,
+		2 * 1024 * 1024,
+		4 * 1024 * 1024,
+		8 * 1024 * 1024,
+		16 * 1024 * 1024,
+	}
 
 	for i, size := range sizes {
 		data, err = s.AList.ReadRange(rawURL, 0, size-1)
@@ -99,13 +130,36 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 		if err != nil || info == nil {
 			info = &meta.Info{Title: filename}
 		}
-		if len(info.CoverData) > 0 {
-			log.Printf("[probe] %s ✓ 读到封面 (%d 字节, 共读 %dMB)",
+
+		hasCover := len(info.CoverData) > 0
+		hasDur := info.Duration > 0
+		hasLyrics := info.Lyrics != ""
+
+		// 1) 元数据全齐了 → 立即停
+		if hasCover && hasDur && hasLyrics {
+			log.Printf("[probe] %s ✓ 封面=%d 时长=%ds 歌词=%d字节 (读 %dMB)",
+				filename, len(info.CoverData), info.Duration, len(info.Lyrics), size/1024/1024)
+			break
+		}
+
+		// 2) 封面+时长齐了，且已读 ≥ 2MB → 接受，放弃歌词
+		if hasCover && hasDur && i >= 1 {
+			log.Printf("[probe] %s ✓ 封面=%d 时长=%ds (读 %dMB, 无歌词)",
+				filename, len(info.CoverData), info.Duration, size/1024/1024)
+			break
+		}
+
+		// 3) 只有封面齐，已读 ≥ 4MB → 接受（有时长更好，没时长也认了）
+		if hasCover && i >= 2 {
+			log.Printf("[probe] %s ✓ 封面=%d (读 %dMB, 无时长无歌词)",
 				filename, len(info.CoverData), size/1024/1024)
 			break
 		}
+
+		// 4) 最后一轮了，没得选
 		if i == len(sizes)-1 {
-			log.Printf("[probe] %s ✗ 8MB 内无封面", filename)
+			log.Printf("[probe] %s ⚠ 16MB 内未读全 (封面=%v 时长=%v 歌词=%v)",
+				filename, hasCover, hasDur, hasLyrics)
 		}
 	}
 
@@ -149,6 +203,22 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 		ISRC:        info.ISRC,
 		BPM:         info.BPM,
 	})
+}
+
+// splitFilename 尝试把 "艺术家 - 标题.wma" 拆成 [艺术家, 标题]
+// 用于 WMA 这种无标签格式的 fallback
+func splitFilename(filename string) []string {
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
+	for _, sep := range []string{" - ", " -", "- ", "-"} {
+		if i := strings.Index(name, sep); i > 0 {
+			a := strings.TrimSpace(name[:i])
+			t := strings.TrimSpace(name[i+len(sep):])
+			if a != "" && t != "" {
+				return []string{a, t}
+			}
+		}
+	}
+	return nil
 }
 
 // 按 MIME 决定扩展名
