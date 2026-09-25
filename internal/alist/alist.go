@@ -28,7 +28,7 @@ func (c *Client) base() string {
 	return strings.TrimRight(c.Settings.GetAList().URL, "/")
 }
 
-// token 优先用已存的，过期了用用户名密码重新登录
+// ensureToken 返回可用 token；为空则用账号密码重新登录
 func (c *Client) ensureToken() (string, error) {
 	cfg := c.Settings.GetAList()
 	if cfg.Token != "" {
@@ -41,10 +41,14 @@ func (c *Client) ensureToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 写回 DB
 	c.Settings.Set("alist_token", tok)
-	// 同时更新 storage_providers JSON 里的 token
 	return tok, nil
+}
+
+// forceRelogin 清掉旧 token 并重新登录（token 过期时用）
+func (c *Client) forceRelogin() (string, error) {
+	c.Settings.Set("alist_token", "")
+	return c.ensureToken()
 }
 
 func (c *Client) Login(user, pass string) (string, error) {
@@ -80,13 +84,15 @@ type FileEntry struct {
 	Modified string `json:"modified"`
 }
 
-func (c *Client) List(path string) ([]FileEntry, error) {
+// ---------- List ----------
+
+func (c *Client) doList(path, token string) ([]FileEntry, error) {
 	body := map[string]any{"path": path, "page": 1, "per_page": 1000, "refresh": false}
 	buf, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", c.base()+"/api/fs/list", bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
-	if tok, _ := c.ensureToken(); tok != "" {
-		req.Header.Set("Authorization", tok)
+	if token != "" {
+		req.Header.Set("Authorization", token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -109,13 +115,34 @@ func (c *Client) List(path string) ([]FileEntry, error) {
 	return out.Data.Content, nil
 }
 
-func (c *Client) GetRawURL(path string) (string, error) {
+func (c *Client) List(path string) ([]FileEntry, error) {
+	tok, err := c.ensureToken()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := c.doList(path, tok)
+	if err == nil {
+		return entries, nil
+	}
+	if !isAuthError(err) {
+		return nil, err
+	}
+	tok2, err2 := c.forceRelogin()
+	if err2 != nil {
+		return nil, fmt.Errorf("alist relogin failed: %w (original: %v)", err2, err)
+	}
+	return c.doList(path, tok2)
+}
+
+// ---------- GetRawURL ----------
+
+func (c *Client) doGetRawURL(path, token string) (string, error) {
 	body := map[string]any{"path": path}
 	buf, _ := json.Marshal(body)
 	req, _ := http.NewRequest("POST", c.base()+"/api/fs/get", bytes.NewReader(buf))
 	req.Header.Set("Content-Type", "application/json")
-	if tok, _ := c.ensureToken(); tok != "" {
-		req.Header.Set("Authorization", tok)
+	if token != "" {
+		req.Header.Set("Authorization", token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -137,6 +164,39 @@ func (c *Client) GetRawURL(path string) (string, error) {
 	}
 	return out.Data.RawURL, nil
 }
+
+func (c *Client) GetRawURL(path string) (string, error) {
+	tok, err := c.ensureToken()
+	if err != nil {
+		return "", err
+	}
+	url, err := c.doGetRawURL(path, tok)
+	if err == nil {
+		return url, nil
+	}
+	if !isAuthError(err) {
+		return "", err
+	}
+	tok2, err2 := c.forceRelogin()
+	if err2 != nil {
+		return "", fmt.Errorf("alist relogin failed: %w (original: %v)", err2, err)
+	}
+	return c.doGetRawURL(path, tok2)
+}
+
+// isAuthError 判断错误是否是 token 失效 / 未授权
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "401") ||
+		strings.Contains(msg, "token is expired") ||
+		strings.Contains(msg, "token is invalidated") ||
+		strings.Contains(msg, "unauthorized")
+}
+
+// ---------- ReadRange ----------
 
 func (c *Client) ReadRange(rawURL string, start, end int64) ([]byte, error) {
 	client := &http.Client{Timeout: 60 * time.Second}
