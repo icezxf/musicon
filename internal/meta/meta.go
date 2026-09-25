@@ -73,7 +73,6 @@ func Parse(data []byte, filename string) (*Info, error) {
 					}
 				}
 			}
-			// ISRC
 			for _, key := range []string{"ISRC", "TSRC"} {
 				if v, ok := raw[key]; ok {
 					if s := toStr(v); s != "" {
@@ -82,7 +81,6 @@ func Parse(data []byte, filename string) (*Info, error) {
 					}
 				}
 			}
-			// BPM
 			for _, key := range []string{"BPM", "TBPM"} {
 				if v, ok := raw[key]; ok {
 					if s := toStr(v); s != "" {
@@ -94,11 +92,16 @@ func Parse(data []byte, filename string) (*Info, error) {
 		}
 	}
 
-	// 1.5) M4A 手工补全：dhowden/tag 读不到 ©lyr，手动解析
-	if info.Lyrics == "" && len(data) >= 12 {
+	// 1.5) M4A 手工补全：dhowden/tag 读不到 ©lyr 和时长，手动解析
+	if len(data) >= 12 {
 		header := string(data[4:8])
 		if header == "ftyp" || header == "moov" {
-			info.Lyrics = extractM4ALyrics(data)
+			if info.Lyrics == "" {
+				info.Lyrics = extractM4ALyrics(data)
+			}
+			if info.Duration == 0 {
+				info.Duration = extractM4ADuration(data)
+			}
 		}
 	}
 
@@ -142,7 +145,6 @@ func Parse(data []byte, filename string) (*Info, error) {
 			info.BPM = atoi(firstVC(vc, "BPM"))
 		}
 
-		// 用 mewkiz/flac 读音频流信息
 		if stream, err := flac.Parse(bytes.NewReader(data)); err == nil && stream != nil {
 			sr := int(stream.Info.SampleRate)
 			ch := int(stream.Info.NChannels)
@@ -171,7 +173,6 @@ func Parse(data []byte, filename string) (*Info, error) {
 		info.Artist, info.Title = artistFromFilename(filename, info.Title)
 	}
 
-	// 修复乱码
 	info.Title = repairMojibake(info.Title)
 	info.Artist = repairMojibake(info.Artist)
 	info.Album = repairMojibake(info.Album)
@@ -192,8 +193,6 @@ func extractM4ALyrics(data []byte) string {
 			return ""
 		}
 	}
-	// atom 结构：[size:4][©lyr:4][data atom...]
-	// data atom 结构：[size:4]['data':4][type:4][locale:4][payload...]
 	pos := idx + 4
 	if pos+8 > len(data) {
 		return ""
@@ -211,6 +210,51 @@ func extractM4ALyrics(data []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data[textStart:textEnd]))
+}
+
+// extractM4ADuration 解析 MP4 的 mvhd atom 拿时长（秒）
+func extractM4ADuration(data []byte) int {
+	idx := bytes.Index(data, []byte("mvhd"))
+	if idx < 0 {
+		return 0
+	}
+	pos := idx + 4
+	if pos+20 > len(data) {
+		return 0
+	}
+	version := data[pos]
+	pos += 4 // skip version + flags
+
+	if version == 1 {
+		if pos+28 > len(data) {
+			return 0
+		}
+		pos += 16
+		timescale := int(data[pos])<<24 | int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
+		pos += 4
+		if pos+8 > len(data) {
+			return 0
+		}
+		// 64位 duration
+		durHi := uint64(data[pos])<<56 | uint64(data[pos+1])<<48 | uint64(data[pos+2])<<40 | uint64(data[pos+3])<<32
+		durLo := uint64(data[pos+4])<<24 | uint64(data[pos+5])<<16 | uint64(data[pos+6])<<8 | uint64(data[pos+7])
+		dur := int64(durHi | durLo)
+		if timescale > 0 {
+			return int(dur / int64(timescale))
+		}
+	} else {
+		if pos+16 > len(data) {
+			return 0
+		}
+		pos += 8
+		timescale := int(data[pos])<<24 | int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
+		pos += 4
+		dur := int(data[pos])<<24 | int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
+		if timescale > 0 {
+			return dur / timescale
+		}
+	}
+	return 0
 }
 
 func extractMulti(v any) string {
@@ -238,8 +282,6 @@ func containsStr(arr []string, s string) bool {
 	}
 	return false
 }
-
-// ---------- FLAC 手工解析 ----------
 
 func parseFLACVorbis(data []byte) map[string][]string {
 	if len(data) < 4 || string(data[:4]) != "fLaC" {
@@ -327,8 +369,6 @@ func allVC(vc map[string][]string, keys ...string) string {
 	return ""
 }
 
-// ---------- 文件名 fallback ----------
-
 var reArtistTitle = regexp.MustCompile(`^(.+?)\s*-\s*(.+)$`)
 
 func titleFromFilename(fn string) string {
@@ -361,8 +401,6 @@ func artistFromFilename(fn, currentTitle string) (string, string) {
 	}
 	return "", currentTitle
 }
-
-// ---------- 歌词 & 乱码 ----------
 
 func extractLyrics(m tag.Metadata) string {
 	if lyr := strings.TrimSpace(m.Lyrics()); lyr != "" {
@@ -423,8 +461,6 @@ func repairMojibake(s string) string {
 	}
 	return s
 }
-
-// ---------- LRC ----------
 
 type LRCLine struct {
 	Start int    `json:"start,omitempty"`
