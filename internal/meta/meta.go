@@ -94,6 +94,14 @@ func Parse(data []byte, filename string) (*Info, error) {
 		}
 	}
 
+	// 1.5) M4A 手工补全：dhowden/tag 读不到 ©lyr，手动解析
+	if info.Lyrics == "" && len(data) >= 12 {
+		header := string(data[4:8])
+		if header == "ftyp" || header == "moov" {
+			info.Lyrics = extractM4ALyrics(data)
+		}
+	}
+
 	// 2) FLAC 手工补全 + 音频流信息
 	if len(data) >= 4 && string(data[:4]) == "fLaC" {
 		vc := parseFLACVorbis(data)
@@ -171,6 +179,38 @@ func Parse(data []byte, filename string) (*Info, error) {
 	info.Composer = repairMojibake(info.Composer)
 
 	return info, nil
+}
+
+// extractM4ALyrics 直接从 MP4/M4A 原始字节提取 ©lyr 歌词
+func extractM4ALyrics(data []byte) string {
+	marker := []byte{0xA9, 'l', 'y', 'r'}
+	idx := bytes.Index(data, marker)
+	if idx < 0 {
+		marker = []byte{0xA9, 'L', 'Y', 'R'}
+		idx = bytes.Index(data, marker)
+		if idx < 0 {
+			return ""
+		}
+	}
+	// atom 结构：[size:4][©lyr:4][data atom...]
+	// data atom 结构：[size:4]['data':4][type:4][locale:4][payload...]
+	pos := idx + 4
+	if pos+8 > len(data) {
+		return ""
+	}
+	if string(data[pos+4:pos+8]) != "data" {
+		return ""
+	}
+	dataSize := int(data[pos])<<24 | int(data[pos+1])<<16 | int(data[pos+2])<<8 | int(data[pos+3])
+	if dataSize < 16 || pos+dataSize > len(data) {
+		return ""
+	}
+	textStart := pos + 16
+	textEnd := pos + dataSize
+	if textStart >= textEnd {
+		return ""
+	}
+	return strings.TrimSpace(string(data[textStart:textEnd]))
 }
 
 func extractMulti(v any) string {
