@@ -3,6 +3,8 @@ FROM ghcr.io/icezxf/ncm-server:latest AS ncm
 
 # Go 构建阶段
 FROM golang:1.23-alpine AS builder
+RUN apk add --no-cache ca-certificates tzdata
+ENV TZ=Asia/Shanghai
 WORKDIR /src
 COPY . .
 RUN go mod tidy && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /musicon-go .
