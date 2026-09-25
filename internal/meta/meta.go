@@ -325,11 +325,17 @@ func artistFromFilename(fn, currentTitle string) (string, string) {
 // ---------- 歌词 & 乱码 ----------
 
 func extractLyrics(m tag.Metadata) string {
+	if lyr := strings.TrimSpace(m.Lyrics()); lyr != "" {
+		return lyr
+	}
 	raw := m.Raw()
 	if raw == nil {
 		return ""
 	}
-	for _, k := range []string{"LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS", "LYRIC"} {
+	for _, k := range []string{
+		"LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS", "LYRIC",
+		"©lyr", "©LYR", "\xA9lyr", "\xA9LYR",
+	} {
 		if v, ok := raw[k]; ok {
 			if s := toStr(v); s != "" {
 				return s
@@ -338,7 +344,10 @@ func extractLyrics(m tag.Metadata) string {
 	}
 	for k, v := range raw {
 		ku := strings.ToUpper(k)
-		if strings.Contains(ku, "LYRIC") || strings.HasPrefix(ku, "USLT") {
+		if strings.Contains(ku, "LYRIC") ||
+			strings.HasPrefix(ku, "USLT") ||
+			strings.HasSuffix(ku, "LYR") ||
+			strings.Contains(ku, "\xA9LYR") {
 			if s := toStr(v); s != "" {
 				return s
 			}
