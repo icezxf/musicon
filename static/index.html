@@ -181,8 +181,8 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 .player.show{transform:translateY(0)}
 .player-info{flex:1;min-width:0;display:flex;align-items:center;gap:12px}
 .player-cover{width:40px;height:40px;border-radius:var(--r-sm);object-fit:cover;
-  background:var(--bg-2);flex-shrink:0}
-.player-meta{min-width:0}
+  background:var(--bg-2);flex-shrink:0;cursor:pointer}
+.player-meta{min-width:0;cursor:pointer}
 .player-title{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .player-artist{font-size:12px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .player-ctrl{display:flex;align-items:center;gap:8px}
@@ -234,18 +234,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
 .modal .input:focus,.modal .select:focus{border-color:var(--accent)}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
-@media (max-width:900px){
-  .app{grid-template-columns:1fr}
-  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:50;
-    transform:translateX(-100%);transition:transform .24s;width:260px}
-  .sidebar.open{transform:translateX(0)}
-  .list-header,.row{grid-template-columns:36px 44px 1fr 70px}
-  .col-cover,.col-artist,.col-album,.col-prov{display:none}
-  .topbar{padding:14px 16px 10px}
-  .toolbar{padding:10px 16px}
-  .list-wrap{padding:0 16px 100px}
-  .topbar-title{display:none}
-}
 .card .input,.card .select{width:100%;height:36px;padding:0 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:13px}
 .card .input:focus,.card .select:focus{border-color:var(--accent)}
 .card .lbl{font-size:11px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
@@ -276,13 +264,25 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 #online-modal .online-footer .online-info{flex:1;font-size:13px;color:var(--text-2)}
 #online-modal .online-footer .online-info b{color:var(--accent-h)}
 
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:50;
+    transform:translateX(-100%);transition:transform .24s;width:260px}
+  .sidebar.open{transform:translateX(0)}
+  .list-header,.row{grid-template-columns:36px 44px 1fr 70px}
+  .col-cover,.col-artist,.col-album,.col-prov{display:none}
+  .topbar{padding:14px 16px 10px}
+  .toolbar{padding:10px 16px}
+  .list-wrap{padding:0 16px 100px}
+  .topbar-title{display:none}
+}
+
 @media (max-width:768px){
   .sidebar{width:280px;box-shadow:4px 0 24px rgba(0,0,0,.5)}
   .brand{padding:16px 14px 12px}
   .brand-name{font-size:14px}
   .nav-section{padding:10px 8px}
   .nav-item{padding:11px 10px;font-size:14.5px}
-  .main{height:100vh;overflow:hidden}
   .topbar{padding:12px 12px 8px;gap:8px;flex-wrap:wrap}
   .topbar-title{font-size:16px;max-width:100%;flex:1 1 100%;margin-bottom:4px;order:-1}
   .search-box{flex:1 1 100%;max-width:none;height:36px;order:1}
@@ -295,22 +295,14 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .btn-ghost{padding:6px 10px;font-size:12.5px}
   #pager-slot{width:100%;order:3;margin-top:6px}
   .pager{flex-wrap:wrap;justify-content:center}
-  .pager button{min-width:28px;height:26px;padding:0 6px;font-size:11.5px}
-  .pager .pg-info{font-size:11px;margin-left:4px}
   .list-wrap{padding:0 8px 120px}
   .list-header{display:none}
-  .row{
-    display:flex;flex-direction:column;
-    padding:12px;margin-bottom:6px;border-radius:10px;
-    background:var(--bg-1);border:1px solid var(--border);
-    grid-template-columns:none;gap:0;
-  }
+  .row{display:flex;flex-direction:column;padding:12px;margin-bottom:6px;border-radius:10px;
+    background:var(--bg-1);border:1px solid var(--border);grid-template-columns:none;gap:0;position:relative;min-height:68px}
   .row.selected{background:var(--accent-soft);border-color:var(--accent)}
-  .row:hover{background:var(--bg-1)}
   .row .col-chk{position:absolute;left:12px;top:12px;display:flex}
   .row .col-cover{position:absolute;left:44px;top:12px;display:flex}
   .row .col-play{position:absolute;right:12px;top:12px;display:flex}
-  .row{position:relative;min-height:68px}
   .row .col-cover .cover{width:48px;height:48px;border-radius:8px}
   .row .col-num{display:none}
   .row .col-title{margin-left:104px;margin-right:44px;min-height:48px;display:flex;flex-direction:column;justify-content:center}
@@ -344,19 +336,13 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   .gcard-name{font-size:12.5px}
   .gcard-sub{font-size:10.5px}
   .card{padding:12px 14px}
-  .field{font-size:12.5px;flex-direction:column;gap:2px;padding:8px 0}
-  .field-label{width:100%;font-size:11px}
-  .field-value{font-size:13px}
   [data-section] .grid,[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important}
   .lbl{font-size:11px}
   .modal{padding:20px;width:calc(100vw - 32px);max-width:400px}
   .modal-title{font-size:15px;margin-bottom:14px}
   .modal .input,.modal .select{height:36px;font-size:13.5px}
-  .modal-actions{gap:8px}
-  .modal-actions .btn-primary,.modal-actions .btn-ghost{padding:8px 14px;font-size:13px}
   .icon-btn{width:36px;height:36px}
   #btn-menu{display:flex !important;background:var(--bg-2);border:1px solid var(--border)}
-  #view-artists, #view-albums{overflow-y:auto}
   .artist-header{padding:16px 12px 20px}
   .artist-header-avatar{width:80px;height:80px;font-size:32px;margin-right:14px}
   .artist-header-name{font-size:18px;margin-bottom:6px}
@@ -368,7 +354,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   #online-modal .online-row .orow-status{display:none}
 }
 
-/* ===== 播放器增强：上下首、模式、队列 ===== */
+/* ===== 播放器增强 ===== */
 .player-ctrl{gap:4px}
 .player-right{display:flex;align-items:center;gap:4px}
 .player-right button{width:36px;height:36px;border-radius:8px;
@@ -413,11 +399,118 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   font-variant-numeric:tabular-nums;flex-shrink:0}
 .queue-item.playing .q-title{color:var(--accent-h)}
 .queue-item.playing .q-idx{color:var(--accent)}
-@media (max-width:768px){
+
+/* ===== 全屏播放页 ===== */
+.np-page{position:fixed;inset:0;z-index:80;background:var(--bg);
+  display:none;flex-direction:column;overflow:hidden}
+.np-page.show{display:flex;animation:npFadeIn .3s}
+@keyframes npFadeIn{from{opacity:0}to{opacity:1}}
+.np-bg{position:absolute;inset:-60px;z-index:0;
+  background-size:cover;background-position:center;
+  filter:blur(80px) saturate(1.3);opacity:0.35}
+.np-bg::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(11,13,16,0.5),rgba(11,13,16,0.9))}
+.np-top{padding:16px 24px;display:flex;align-items:center;gap:12px;
+  flex-shrink:0;z-index:2;position:relative}
+.np-down{width:40px;height:40px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-2);transition:all .15s}
+.np-down:hover{background:var(--bg-2);color:var(--text)}
+.np-down svg{width:22px;height:22px}
+.np-page-title{font-size:13px;color:var(--text-3);flex:1;text-align:center;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.3px}
+.np-body{flex:1;display:flex;align-items:center;justify-content:center;
+  padding:20px 60px;gap:60px;min-height:0;overflow:hidden;position:relative;z-index:1}
+.np-left{display:flex;flex-direction:column;align-items:center;
+  flex-shrink:0;gap:28px}
+.np-cover-wrap{width:360px;height:360px;border-radius:16px;
+  overflow:hidden;position:relative;
+  box-shadow:0 24px 80px rgba(0,0,0,0.7);background:var(--bg-2)}
+.np-cover-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.np-cover-fallback{width:100%;height:100%;display:flex;
+  align-items:center;justify-content:center;font-size:120px;
+  font-weight:700;color:var(--text-3);
+  background:linear-gradient(135deg,#232833,#1a1e26)}
+.np-meta{text-align:center;max-width:400px}
+.np-song-title{font-size:24px;font-weight:600;letter-spacing:-0.4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px;
+  line-height:1.3}
+.np-song-artist{font-size:14px;color:var(--text-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np-right{flex:1;max-width:560px;height:100%;min-width:0;
+  display:flex;align-items:center;justify-content:center;position:relative}
+.np-lyrics{width:100%;height:100%;overflow-y:auto;
+  scroll-behavior:smooth;padding:45% 0;
+  mask-image:linear-gradient(to bottom,transparent 0%,black 20%,black 80%,transparent 100%);
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0%,black 20%,black 80%,transparent 100%)}
+.np-lyrics::-webkit-scrollbar{width:0}
+.np-lyric-line{padding:10px 20px;font-size:16px;line-height:1.55;
+  color:var(--text-3);transition:all .3s ease;cursor:pointer;
+  text-align:center;border-radius:8px}
+.np-lyric-line:hover{color:var(--text-2)}
+.np-lyric-line.active{color:var(--text);font-size:19px;font-weight:600;
+  text-shadow:0 0 24px rgba(99,102,241,0.4)}
+.np-empty{display:flex;flex-direction:column;align-items:center;
+  justify-content:center;color:var(--text-3);font-size:14px;
+  height:100%;gap:10px;padding-top:45%}
+.np-empty svg{width:40px;height:40px;opacity:.5}
+.np-bottom{padding:20px 60px 30px;flex-shrink:0;
+  display:flex;flex-direction:column;gap:16px;z-index:2;position:relative}
+.np-progress{display:flex;align-items:center;gap:14px;
+  font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;
+  max-width:800px;margin:0 auto;width:100%}
+.np-progress input[type=range]{flex:1;height:4px;-webkit-appearance:none;
+  background:rgba(255,255,255,0.1);border-radius:2px;appearance:none;outline:none;cursor:pointer}
+.np-progress input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;
+  width:14px;height:14px;border-radius:50%;background:var(--accent);
+  cursor:pointer;transition:transform .12s;box-shadow:0 0 0 4px rgba(99,102,241,0.15)}
+.np-progress input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
+.np-controls{display:flex;align-items:center;justify-content:center;gap:24px}
+.np-controls button{width:46px;height:46px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-2);transition:all .12s}
+.np-controls button:hover{background:rgba(255,255,255,0.08);color:var(--text)}
+.np-controls button svg{width:22px;height:22px}
+.np-controls .np-play{width:64px;height:64px;background:var(--accent);color:#fff;
+  box-shadow:0 8px 24px rgba(99,102,241,0.4)}
+.np-controls .np-play:hover{background:var(--accent-h);transform:scale(1.06)}
+.np-controls .np-play svg{width:28px;height:28px}
+.np-extra{display:flex;gap:14px;justify-content:center;margin-top:2px}
+.np-extra button{width:38px;height:38px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-3);transition:all .12s}
+.np-extra button:hover{background:rgba(255,255,255,0.08);color:var(--text)}
+.np-extra button.active{color:var(--accent-h);background:rgba(99,102,241,0.12)}
+.np-extra button svg{width:18px;height:18px}
+#np-mode svg{display:none}
+#np-mode[data-mode="sequential"] .icon-mode-seq{display:block}
+#np-mode[data-mode="list"] .icon-mode-list{display:block}
+#np-mode[data-mode="single"] .icon-mode-single{display:block}
+#np-mode[data-mode="shuffle"] .icon-mode-shuffle{display:block}
+
+@media (max-width:900px){
+  .np-body{flex-direction:column;padding:12px 20px;gap:20px;
+    overflow-y:auto;align-items:center;justify-content:flex-start}
+  .np-left{gap:16px;flex-shrink:0}
+  .np-cover-wrap{width:220px;height:220px;border-radius:12px}
+  .np-cover-fallback{font-size:80px}
+  .np-meta{max-width:100%}
+  .np-song-title{font-size:18px;margin-bottom:4px}
+  .np-song-artist{font-size:12.5px}
+  .np-right{max-width:none;width:100%;height:auto;min-height:200px;flex:1 1 auto}
+  .np-lyrics{padding:80px 0 60px;height:auto;max-height:40vh}
+  .np-lyric-line{font-size:14px;padding:8px 12px}
+  .np-lyric-line.active{font-size:16.5px}
+  .np-bottom{padding:12px 20px 20px;gap:12px}
+  .np-controls{gap:14px}
+  .np-controls button{width:40px;height:40px}
+  .np-controls .np-play{width:56px;height:56px}
+  .np-controls .np-play svg{width:24px;height:24px}
+  .np-extra{gap:10px}
+  .np-extra button{width:34px;height:34px}
   .player-right{gap:0}
   .player-right button{width:32px;height:32px}
   .queue-panel{width:100vw}
-  .player-ctrl button{width:32px;height:32px}
 }
 </style>
 </head>
@@ -431,7 +524,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       </a>
     </div>
-
     <div class="nav-section">
       <div class="nav-title">库</div>
       <div class="nav-item active" id="nav-all">
@@ -450,7 +542,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <span class="nav-count" id="count-albums">0</span>
       </div>
     </div>
-
     <div class="nav-section">
       <div class="nav-title">功能</div>
       <div class="nav-item" id="nav-tasks">
@@ -462,7 +553,6 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
         <span class="nav-label">设置</span>
       </div>
     </div>
-
     <div class="nav-section nav-playlists">
       <div class="nav-title">
         <span>歌单</span>
@@ -579,7 +669,7 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
     <div class="player" id="player-bar">
       <div class="player-info">
         <img class="player-cover" id="pl-cover" alt="" onerror="this.style.visibility='hidden'">
-        <div class="player-meta">
+        <div class="player-meta" id="pl-meta">
           <div class="player-title" id="pl-title">未播放</div>
           <div class="player-artist" id="pl-artist">—</div>
         </div>
@@ -619,14 +709,8 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
 <div class="modal-bg" id="pl-modal">
   <div class="modal">
     <div class="modal-title">新建歌单</div>
-    <label>
-      <div class="lbl">歌单名称</div>
-      <input id="pl-new-name" class="input" placeholder="例如：我的最爱" maxlength="60">
-    </label>
-    <label>
-      <div class="lbl">备注（可选）</div>
-      <input id="pl-new-comment" class="input" placeholder="描述信息" maxlength="200">
-    </label>
+    <label><div class="lbl">歌单名称</div><input id="pl-new-name" class="input" placeholder="例如：我的最爱" maxlength="60"></label>
+    <label><div class="lbl">备注（可选）</div><input id="pl-new-comment" class="input" placeholder="描述信息" maxlength="200"></label>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
       <input type="checkbox" id="pl-new-public" style="width:16px;height:16px;accent-color:var(--accent)">
       <span style="font-size:13px;color:var(--text-2)">设为公开歌单（其他人可见）</span>
@@ -694,6 +778,64 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   <div class="queue-list" id="queue-list"></div>
 </div>
 
+<div class="np-page" id="np-page">
+  <div class="np-bg" id="np-bg"></div>
+  <div class="np-top">
+    <button class="np-down" id="np-close" title="收起">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="np-page-title" id="np-page-title">正在播放</div>
+    <div style="width:40px"></div>
+  </div>
+  <div class="np-body">
+    <div class="np-left">
+      <div class="np-cover-wrap">
+        <img id="np-cover" alt="" style="display:none">
+        <div class="np-cover-fallback" id="np-cover-fallback">♪</div>
+      </div>
+      <div class="np-meta">
+        <div class="np-song-title" id="np-song-title">未播放</div>
+        <div class="np-song-artist" id="np-song-artist">—</div>
+      </div>
+    </div>
+    <div class="np-right">
+      <div class="np-lyrics" id="np-lyrics">
+        <div class="np-empty">暂无歌词</div>
+      </div>
+    </div>
+  </div>
+  <div class="np-bottom">
+    <div class="np-progress">
+      <span id="np-cur">0:00</span>
+      <input type="range" id="np-seek" min="0" max="100" value="0">
+      <span id="np-dur">0:00</span>
+    </div>
+    <div class="np-controls">
+      <button id="np-prev" title="上一首">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+      </button>
+      <button id="np-play" class="np-play" title="播放/暂停">
+        <svg viewBox="0 0 24 24" fill="currentColor" id="np-icon-play"><polygon points="6 4 20 12 6 20"/></svg>
+        <svg viewBox="0 0 24 24" fill="currentColor" id="np-icon-pause" style="display:none"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+      </button>
+      <button id="np-next" title="下一首">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+      </button>
+    </div>
+    <div class="np-extra">
+      <button id="np-mode" data-mode="list" title="播放模式">
+        <svg class="icon-mode-seq" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/><polyline points="14 6 20 12 14 18"/></svg>
+        <svg class="icon-mode-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        <svg class="icon-mode-single" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><text x="12" y="16" font-size="9" text-anchor="middle" fill="currentColor" stroke="none" font-weight="bold">1</text></svg>
+        <svg class="icon-mode-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+      </button>
+      <button id="np-queue" title="播放队列">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
 <audio id="player"></audio>
 <div class="toast" id="toast"></div>
 
@@ -706,13 +848,9 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 const state = {
   songs: [], playlists: [], activePlaylistId: null, playlistTracks: [],
   view: 'all', selected: new Set(), filtered: [], playingId: null,
-  mainView: 'songs',
-  page: 1,
-  pageSize: 50,
-  filterArtist: null,
-  filterAlbum: null,
-  onlineResults: [],
-  onlineSelected: new Set(),
+  mainView: 'songs', page: 1, pageSize: 50,
+  filterArtist: null, filterAlbum: null,
+  onlineResults: [], onlineSelected: new Set(),
 };
 
 async function api(path, opts){
@@ -730,8 +868,8 @@ function showLoginModal(){
     m.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center';
     m.innerHTML = '<div style="background:#181c22;border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:28px;width:min(380px,90vw);box-shadow:0 20px 60px rgba(0,0,0,.6)">'
       + '<div style="font-size:17px;font-weight:600;margin-bottom:20px;color:#e8eaee">登录 MusicOn</div>'
-      + '<input id="login-user" placeholder="用户名" autocomplete="username" style="width:100%;height:40px;padding:0 12px;background:#0d1016;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#e8eaee;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box">'
-      + '<input id="login-pass" type="password" placeholder="密码" autocomplete="current-password" style="width:100%;height:40px;padding:0 12px;background:#0d1016;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#e8eaee;font-size:14px;margin-bottom:16px;outline:none;box-sizing:border-box">'
+      + '<input id="login-user" placeholder="用户名" style="width:100%;height:40px;padding:0 12px;background:#0d1016;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#e8eaee;font-size:14px;margin-bottom:12px;outline:none;box-sizing:border-box">'
+      + '<input id="login-pass" type="password" placeholder="密码" style="width:100%;height:40px;padding:0 12px;background:#0d1016;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#e8eaee;font-size:14px;margin-bottom:16px;outline:none;box-sizing:border-box">'
       + '<button id="login-btn" style="width:100%;height:40px;background:#6366f1;color:#fff;border:0;border-radius:8px;font-size:14px;cursor:pointer;font-weight:500">登录</button>'
       + '<div id="login-err" style="color:#ef4444;font-size:13px;margin-top:12px;min-height:18px"></div>'
       + '</div>';
@@ -756,22 +894,14 @@ async function doLogin(){
   err.textContent = '登录中…';
   try {
     const r = await fetch('/api/web-auth/login', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      credentials: 'same-origin',
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin',
       body: JSON.stringify({username: u, password: pw})
     });
-    if (!r.ok){
-      const t = await r.text();
-      err.textContent = '登录失败：' + (t || r.status);
-      return;
-    }
+    if (!r.ok){ const t = await r.text(); err.textContent = '登录失败：' + (t || r.status); return; }
     try { localStorage.setItem('musicon_last_user', u); } catch(e){}
     document.getElementById('login-modal').style.display = 'none';
     location.reload();
-  } catch(e){
-    err.textContent = '网络错误：' + e.message;
-  }
+  } catch(e){ err.textContent = '网络错误：' + e.message; }
 }
 
 let toastTimer;
@@ -799,6 +929,12 @@ function fmtDuration(sec){
 function coverUrl(s){
   const f = (s.cover_path || '').split('/').pop();
   if (f) return '/api/covers/thumb/96/' + encodeURIComponent(f);
+  if (s.cover_art) return s.cover_art;
+  return '';
+}
+function coverUrlBig(s){
+  const f = (s.cover_path || '').split('/').pop();
+  if (f) return '/api/covers/thumb/500/' + encodeURIComponent(f);
   if (s.cover_art) return s.cover_art;
   return '';
 }
@@ -837,32 +973,23 @@ function matchesFilter(s){
 }
 
 function splitArtists(str){
-  return String(str || '')
-    .split(/[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
-    .map(function(x){ return x.trim(); })
-    .filter(function(x){ return x; });
+  return String(str || '').split(/[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*\/\s*/i)
+    .map(x => x.trim()).filter(x => x);
 }
-
 function combinedArtist(s){
   const a = (s.artist || '').trim();
   const aa = (s.album_artist || '').trim();
   if (!aa || aa === a) return a;
   const lower = aa.toLowerCase();
   if (lower === 'various artists' || lower === 'va' || lower === '群星') return a;
-  for (const x of splitArtists(a)) {
-    if (x.toLowerCase() === lower) return a;
-  }
+  for (const x of splitArtists(a)) { if (x.toLowerCase() === lower) return a; }
   return a ? a + '、' + aa : aa;
 }
-
 function renderArtistLinks(s){
   const names = splitArtists(combinedArtist(s));
   if (!names.length) return '';
-  return names.map(function(a){
-    return '<a class="artist-link" data-artist="' + esc(a) + '" href="javascript:void(0)">' + esc(a) + '</a>';
-  }).join('、');
+  return names.map(a => '<a class="artist-link" data-artist="' + esc(a) + '" href="javascript:void(0)">' + esc(a) + '</a>').join('、');
 }
-
 function renderAlbumLinks(s){
   const album = (s.album || '').trim();
   if (!album) return '';
@@ -874,28 +1001,19 @@ let _lastArtistHeaderName = null;
 async function renderArtistHeader(){
   const box = document.getElementById('artist-header');
   if (!box) return;
-
   if (state.view !== 'artist' || !state.filterArtist){
-    if (box.style.display !== 'none' || box.innerHTML !== ''){
-      box.style.display = 'none';
-      box.innerHTML = '';
-    }
-    _lastArtistHeaderName = null;
-    return;
+    if (box.style.display !== 'none' || box.innerHTML !== ''){ box.style.display = 'none'; box.innerHTML = ''; }
+    _lastArtistHeaderName = null; return;
   }
-
   if (_lastArtistHeaderName === state.filterArtist) return;
   _lastArtistHeaderName = state.filterArtist;
-
   const name = state.filterArtist;
   const initial = name.charAt(0).toUpperCase();
   box.style.display = '';
-  box.innerHTML =
-    '<div class="artist-header-avatar" id="artist-header-avatar">' + esc(initial) + '</div>'
+  box.innerHTML = '<div class="artist-header-avatar" id="artist-header-avatar">' + esc(initial) + '</div>'
     + '<div class="artist-header-name">' + esc(name) + '</div>'
     + '<div class="artist-header-bio" id="artist-header-bio">加载中…</div>'
     + '<div class="artist-header-meta" id="artist-header-meta"></div>';
-
   const img = new Image();
   img.onload = function(){
     const el = document.getElementById('artist-header-avatar');
@@ -905,7 +1023,6 @@ async function renderArtistHeader(){
     }
   };
   img.src = '/api/artist/image?name=' + encodeURIComponent(name);
-
   try {
     const r = await api('/api/artist/photo?name=' + encodeURIComponent(name));
     if (_lastArtistHeaderName !== name) return;
@@ -933,9 +1050,7 @@ function render(){
   const body = $('#list-body');
   if (!list.length){
     body.innerHTML = '<div class="empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><div class="empty-title">没有匹配的歌曲</div><div class="empty-sub">换个关键词或调整筛选</div></div>';
-    removePager();
-    updateCounters();
-    return;
+    removePager(); updateCounters(); return;
   }
   body.innerHTML = list.map(function(s, i){
     const idx = start + i + 1;
@@ -979,16 +1094,16 @@ function renderPager(pages, total){
   if (!slot) return;
   if (pages <= 1){ slot.innerHTML = ''; return; }
   var html = '<div class="pager" id="pager">';
-  html += '<button data-pg="1" ' + (state.page === 1 ? 'disabled' : '') + ' title="首页">«</button>';
-  html += '<button data-pg="' + (state.page - 1) + '" ' + (state.page === 1 ? 'disabled' : '') + ' title="上一页">‹</button>';
+  html += '<button data-pg="1" ' + (state.page === 1 ? 'disabled' : '') + '>«</button>';
+  html += '<button data-pg="' + (state.page - 1) + '" ' + (state.page === 1 ? 'disabled' : '') + '>‹</button>';
   var from = Math.max(1, state.page - 2);
   var to = Math.min(pages, from + 4);
   from = Math.max(1, to - 4);
   for (var i = from; i <= to; i++){
     html += '<button data-pg="' + i + '"' + (i === state.page ? ' class="active"' : '') + '>' + i + '</button>';
   }
-  html += '<button data-pg="' + (state.page + 1) + '" ' + (state.page === pages ? 'disabled' : '') + ' title="下一页">›</button>';
-  html += '<button data-pg="' + pages + '" ' + (state.page === pages ? 'disabled' : '') + ' title="末页">»</button>';
+  html += '<button data-pg="' + (state.page + 1) + '" ' + (state.page === pages ? 'disabled' : '') + '>›</button>';
+  html += '<button data-pg="' + pages + '" ' + (state.page === pages ? 'disabled' : '') + '>»</button>';
   html += '<span class="pg-info">' + state.page + '/' + pages + ' 页</span>';
   html += '</div>';
   slot.innerHTML = html;
@@ -1015,7 +1130,6 @@ function updateCounters(){
   if (abCnt) abCnt.textContent = n;
   const ab = document.getElementById('actionbar');
   if (ab) ab.classList.toggle('show', n > 0 && state.mainView === 'songs');
-
   const sel = document.getElementById('ab-playlist-select');
   if (sel) {
     const prevVal = sel.value;
@@ -1024,25 +1138,18 @@ function updateCounters(){
       return '<option value="' + esc(p.id) + '"' + dis + '>' + esc(p.name) + (p.is_readonly ? '（只读）' : '') + '</option>';
     }).join('');
     sel.innerHTML = '<option value="">选择歌单…</option>' + opts;
-    if (state.view === 'playlist' && state.activePlaylistId) {
-      sel.value = state.activePlaylistId;
-    } else if (prevVal) {
-      sel.value = prevVal;
-    }
+    if (state.view === 'playlist' && state.activePlaylistId) sel.value = state.activePlaylistId;
+    else if (prevVal) sel.value = prevVal;
   }
-
   const inPl = state.view === 'playlist' && state.activePlaylistId;
-  const pl = state.playlists.find(function(p){ return p.id === state.activePlaylistId; });
+  const pl = state.playlists.find(p => p.id === state.activePlaylistId);
   const ro = pl && pl.is_readonly;
   const btnRm = document.getElementById('ab-remove');
   const btnAdd = document.getElementById('ab-add');
   if (btnRm) btnRm.style.display = inPl && !ro ? '' : 'none';
   if (btnAdd) btnAdd.style.display = '';
-
   const btnAddSongs = document.getElementById('btn-add-songs-to-playlist');
-  if (btnAddSongs) {
-    btnAddSongs.style.display = inPl && !ro ? '' : 'none';
-  }
+  if (btnAddSongs) btnAddSongs.style.display = inPl && !ro ? '' : 'none';
 }
 
 function renderSidebar(){
@@ -1083,8 +1190,7 @@ function buildFilterOptions(){
   const c1 = $('#f-provider').value, c2 = $('#f-format').value;
   $('#f-provider').innerHTML = '<option value="">全部音源</option>' + provs.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
   $('#f-format').innerHTML = '<option value="">全部格式</option>' + fmts.map(f => '<option value="' + esc(f) + '">' + esc(f) + '</option>').join('');
-  $('#f-provider').value = c1;
-  $('#f-format').value = c2;
+  $('#f-provider').value = c1; $('#f-format').value = c2;
 }
 
 function applyFilter(){
@@ -1101,13 +1207,9 @@ function setViewTitle(){
     $('#toolbar').style.display = '';
     $('#search-wrap').style.display = '';
     const pl = state.playlists.find(p => p.id === state.activePlaylistId);
-    if (state.view === 'artist' && state.filterArtist){
-      $('#view-title').textContent = '艺术家：' + state.filterArtist;
-    } else if (state.view === 'playlist' && pl){
-      $('#view-title').textContent = pl.name;
-    } else {
-      $('#view-title').textContent = '全部歌曲';
-    }
+    if (state.view === 'artist' && state.filterArtist) $('#view-title').textContent = '艺术家：' + state.filterArtist;
+    else if (state.view === 'playlist' && pl) $('#view-title').textContent = pl.name;
+    else $('#view-title').textContent = '全部歌曲';
   }
 }
 
@@ -1123,9 +1225,7 @@ function switchMainView(name){
     var el = document.getElementById(navMap[k]);
     if (el) el.classList.toggle('active', k === name);
   });
-  if (name !== 'songs'){
-    $$('#pl-list .nav-item').forEach(x => x.classList.remove('active'));
-  }
+  if (name !== 'songs'){ $$('#pl-list .nav-item').forEach(x => x.classList.remove('active')); }
   $('#actionbar').classList.toggle('show', state.selected.size > 0 && name === 'songs');
   setViewTitle();
   if (name === 'tasks') loadTasks();
@@ -1138,23 +1238,17 @@ function switchMainView(name){
 function saveUIState(){
   try {
     localStorage.setItem('musicon_ui', JSON.stringify({
-      mainView: state.mainView,
-      view: state.view === 'artist' ? 'all' : state.view,
+      mainView: state.mainView, view: state.view === 'artist' ? 'all' : state.view,
       activePlaylistId: state.activePlaylistId,
       filterArtist: state.view === 'artist' ? state.filterArtist : null,
-      filterAlbum: state.filterAlbum,
-      page: state.page,
-      pageSize: state.pageSize
+      filterAlbum: state.filterAlbum, page: state.page, pageSize: state.pageSize
     }));
   } catch(e){}
 }
 
 function loadUIState(){
-  try {
-    const raw = localStorage.getItem('musicon_ui');
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch(e){ return null; }
+  try { const raw = localStorage.getItem('musicon_ui'); if (!raw) return null; return JSON.parse(raw); }
+  catch(e){ return null; }
 }
 
 async function loadSongs(){ const d = await api('/api/songs'); state.songs = d.songs || d.items || []; }
@@ -1186,43 +1280,27 @@ async function loadPlaylistTracks(plId){
       if (!obj.provider_id) obj.provider_id = '';
       return obj;
     }).filter(Boolean);
-  } catch (e){
-    state.playlistTracks = [];
-    toast('加载歌单失败：' + e.message, 'err');
-  }
+  } catch (e){ state.playlistTracks = []; toast('加载歌单失败：' + e.message, 'err'); }
 }
 
 async function selectPlaylist(plId){
   switchMainView('songs');
   state.activePlaylistId = plId;
   state.view = 'playlist';
-  state.filterArtist = null;
-  state.filterAlbum = null;
-  state.selected.clear();
-  state.playlistTracks = [];
+  state.filterArtist = null; state.filterAlbum = null;
+  state.selected.clear(); state.playlistTracks = [];
   _lastArtistHeaderName = null;
-  renderSidebar();
-  render();
+  renderSidebar(); render();
   await loadPlaylistTracks(plId);
-  buildFilterOptions();
-  applyFilter();
-  setViewTitle();
-  saveUIState();
+  buildFilterOptions(); applyFilter(); setViewTitle(); saveUIState();
 }
 
 function selectAllView(){
   switchMainView('songs');
-  state.filterArtist = null;
-  state.filterAlbum = null;
-  state.view = 'all';
-  state.activePlaylistId = null;
-  state.selected.clear();
-  _lastArtistHeaderName = null;
-  renderSidebar();
-  buildFilterOptions();
-  applyFilter();
-  setViewTitle();
-  saveUIState();
+  state.filterArtist = null; state.filterAlbum = null;
+  state.view = 'all'; state.activePlaylistId = null;
+  state.selected.clear(); _lastArtistHeaderName = null;
+  renderSidebar(); buildFilterOptions(); applyFilter(); setViewTitle(); saveUIState();
 }
 
 function aggregateArtists(){
@@ -1270,13 +1348,10 @@ function renderArtists(){
   const box = $('#artists-body');
   const kw = ($('#artists-search') ? $('#artists-search').value : '').trim().toLowerCase();
   const all = aggregateArtists();
-  const list = kw ? all.filter(function(a){ return a.name.toLowerCase().includes(kw); }) : all;
+  const list = kw ? all.filter(a => a.name.toLowerCase().includes(kw)) : all;
   if ($('#count-artists')) $('#count-artists').textContent = all.length;
   if ($('#artists-count-label')) $('#artists-count-label').textContent = '共 ' + all.length + ' 位艺术家';
-  if (!list.length){
-    box.innerHTML = '<div class="empty"><div class="empty-title">没有匹配的艺术家</div></div>';
-    return;
-  }
+  if (!list.length){ box.innerHTML = '<div class="empty"><div class="empty-title">没有匹配的艺术家</div></div>'; return; }
   box.innerHTML = '<div class="grid">' + list.map(function(a){
     const g = avatarGradient(a.name);
     const initial = a.name.charAt(0).toUpperCase();
@@ -1287,7 +1362,6 @@ function renderArtists(){
       + '<div class="gcard-sub" style="text-align:center">' + a.count + ' 首歌</div>'
       + '</div>';
   }).join('') + '</div>';
-
   const avatars = box.querySelectorAll('.gcard-avatar[data-name]');
   const queue = Array.from(avatars);
   const CONCURRENCY = 5;
@@ -1320,13 +1394,10 @@ function renderAlbums(){
   const box = $('#albums-body');
   const kw = ($('#albums-search') ? $('#albums-search').value : '').trim().toLowerCase();
   const all = aggregateAlbums();
-  const list = kw ? all.filter(function(a){ return a.name.toLowerCase().includes(kw) || (a.artist||'').toLowerCase().includes(kw); }) : all;
+  const list = kw ? all.filter(a => a.name.toLowerCase().includes(kw) || (a.artist||'').toLowerCase().includes(kw)) : all;
   if ($('#count-albums')) $('#count-albums').textContent = all.length;
   if ($('#albums-count-label')) $('#albums-count-label').textContent = '共 ' + all.length + ' 张专辑';
-  if (!list.length){
-    box.innerHTML = '<div class="empty"><div class="empty-title">没有匹配的专辑</div></div>';
-    return;
-  }
+  if (!list.length){ box.innerHTML = '<div class="empty"><div class="empty-title">没有匹配的专辑</div></div>'; return; }
   box.innerHTML = '<div class="grid">' + list.map(function(a){
     const cv = a.sample && coverUrl(a.sample);
     const coverTag = cv
@@ -1353,8 +1424,7 @@ async function loadTasks(){
       const st = String(t.status || 'unknown').toLowerCase();
       const m = {running:'运行中',pending:'排队中',done:'已完成',success:'已完成',failed:'失败',error:'失败',cancelled:'已取消'};
       const stText = m[st] || t.status || '';
-      const color = (st === 'running' || st === 'pending') ? 'var(--accent)'
-                   : (st === 'failed' || st === 'error') ? 'var(--danger)' : 'var(--success)';
+      const color = (st === 'running' || st === 'pending') ? 'var(--accent)' : (st === 'failed' || st === 'error') ? 'var(--danger)' : 'var(--success)';
       return '<div class="card">'
         + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
         + '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + '"></span>'
@@ -1372,7 +1442,6 @@ async function loadTasks(){
         + (t.path ? '<button class="btn-ghost btn-rescan" data-path="' + esc(t.path) + '">重新扫描</button>' : '')
         + '</div></div>';
     }).join('') + '</div>';
-
     box.querySelectorAll('.btn-rescan').forEach(function(btn){
       btn.addEventListener('click', async function(){
         const path = this.dataset.path;
@@ -1391,7 +1460,6 @@ async function loadTasks(){
 }
 
 let scanCurPath = '/';
-
 async function scanLoadDir(path) {
   scanCurPath = path;
   document.getElementById('scan-cur-path').textContent = path || '/';
@@ -1400,10 +1468,7 @@ async function scanLoadDir(path) {
   try {
     const d = await api('/api/alist/list?path=' + encodeURIComponent(path));
     const dirs = d.dirs || [];
-    if (!dirs.length) {
-      tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">（没有子目录）</div>';
-      return;
-    }
+    if (!dirs.length) { tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">（没有子目录）</div>'; return; }
     tree.innerHTML = dirs.map(function(dir){
       return '<div class="scan-dir-item" data-path="' + esc(dir.path) + '">'
         + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
@@ -1419,32 +1484,19 @@ async function scanLoadDir(path) {
   }
 }
 
-/* ---------- 在线搜索 ---------- */
-
-function openOnlineModal(){
-  $('#online-modal').classList.add('show');
-  setTimeout(() => $('#online-keyword').focus(), 100);
-}
-
-function closeOnlineModal(){
-  $('#online-modal').classList.remove('show');
-}
+function openOnlineModal(){ $('#online-modal').classList.add('show'); setTimeout(() => $('#online-keyword').focus(), 100); }
+function closeOnlineModal(){ $('#online-modal').classList.remove('show'); }
 
 function renderOnlineResults(){
   const box = $('#online-body');
   const list = state.onlineResults;
-  if (!list.length){
-    box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">没有结果</div>';
-    return;
-  }
+  if (!list.length){ box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--text-3);font-size:13px">没有结果</div>'; return; }
   const existing = new Set(state.songs.map(s => s.id));
   box.innerHTML = list.map(function(s, i){
     const vId = 'lxv-' + s.source + '-' + s.id;
     const isIn = existing.has(vId);
     const sel = state.onlineSelected.has(i);
-    const cov = s.cover
-      ? '<img class="orow-cover" src="' + esc(s.cover) + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">'
-      : '<div class="orow-cover"></div>';
+    const cov = s.cover ? '<img class="orow-cover" src="' + esc(s.cover) + '" loading="lazy" onerror="this.style.visibility=\'hidden\'">' : '<div class="orow-cover"></div>';
     return '<div class="online-row' + (sel ? ' selected' : '') + '" data-idx="' + i + '">'
       + '<div class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
       + cov
@@ -1477,9 +1529,7 @@ async function doOnlineSearch(){
     renderOnlineResults();
   } catch(e){
     box.innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--danger);font-size:13px">搜索失败：' + esc(e.message) + '</div>';
-  } finally {
-    $('#online-search-btn').disabled = false;
-  }
+  } finally { $('#online-search-btn').disabled = false; }
 }
 
 async function importOnlineSelected(){
@@ -1491,23 +1541,15 @@ async function importOnlineSelected(){
   $('#online-import').disabled = true;
   try {
     const r = await api('/api/music/import', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({songs: songs})
     });
     toast('导入成功 ' + (r.imported||0) + ' 首，跳过 ' + (r.skipped||0) + ' 首', 'ok');
     state.onlineSelected.clear();
-    await loadSongs();
-    applyFilter();
-    renderOnlineResults();
-  } catch(e){
-    toast('导入失败：' + e.message, 'err');
-  } finally {
-    $('#online-import').disabled = false;
-  }
+    await loadSongs(); applyFilter(); renderOnlineResults();
+  } catch(e){ toast('导入失败：' + e.message, 'err'); }
+  finally { $('#online-import').disabled = false; }
 }
-
-/* ---------- 设置 ---------- */
 
 function renderStorageForm(state){
   const providers = state.providers, defaultId = state.defaultId, statuses = state.statuses;
@@ -1547,7 +1589,6 @@ function renderStorageForm(state){
       + '</div>'
       + '</div>';
   }).join('');
-
   return '<div style="display:flex;align-items:center;margin-bottom:14px">'
     + '<div style="font-weight:600;font-size:14px">存储源</div>'
     + '<div style="flex:1"></div>'
@@ -1562,15 +1603,8 @@ function collectProviderPayload(){
   const providers = [];
   cards.forEach(function(card){
     function get(f){ const el = card.querySelector('[data-field="' + f + '"]'); return el ? el.value.trim() : ''; }
-    const p = {
-      id: get('id'),
-      type: get('type'),
-      name: get('name'),
-      config: {
-        base_url: get('config.base_url'),
-        refresh_username: get('config.refresh_username')
-      }
-    };
+    const p = { id: get('id'), type: get('type'), name: get('name'),
+      config: { base_url: get('config.base_url'), refresh_username: get('config.refresh_username') } };
     const pw = get('config.refresh_password');
     if (pw) p.config.refresh_password = pw;
     if (!p.id) return;
@@ -1619,9 +1653,7 @@ function bindStorageForm(){
         let msg = e.message;
         try { const j = JSON.parse(msg); msg = (j.detail && (j.detail.hint || j.detail.message)) || msg; } catch(_){}
         toast('测试失败：' + msg, 'err');
-      } finally {
-        btn.disabled = false; btn.textContent = '测试连接';
-      }
+      } finally { btn.disabled = false; btn.textContent = '测试连接'; }
     });
   });
 }
@@ -1655,14 +1687,13 @@ async function saveStorageSettings(){
       if (orig.refresh_password) p.config.refresh_password = orig.refresh_password;
     }
   });
-  const body = {
-    storage_providers: JSON.stringify(payload.storage_providers),
-    storage_default_provider_id: payload.defaultId
-  };
   try {
     await api('/api/settings', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        storage_providers: JSON.stringify(payload.storage_providers),
+        storage_default_provider_id: payload.defaultId
+      })
     });
     toast('存储源已保存', 'ok');
     await loadSettings();
@@ -1676,27 +1707,21 @@ async function loadSettings(){
     const st = d.settings || d || {};
     let providers = [];
     try {
-      providers = typeof st.storage_providers === 'string'
-        ? JSON.parse(st.storage_providers)
-        : (st.storage_providers || []);
+      providers = typeof st.storage_providers === 'string' ? JSON.parse(st.storage_providers) : (st.storage_providers || []);
     } catch(e){ providers = []; }
     if (!Array.isArray(providers)) providers = [];
     const defaultId = st.storage_default_provider_id || (providers[0] && providers[0].id) || '';
     let statuses = {};
     try {
-      statuses = typeof st.provider_test_statuses === 'string'
-        ? JSON.parse(st.provider_test_statuses)
-        : (st.provider_test_statuses || {});
+      statuses = typeof st.provider_test_statuses === 'string' ? JSON.parse(st.provider_test_statuses) : (st.provider_test_statuses || {});
     } catch(e){ statuses = {}; }
     window.__providerState = { providers: JSON.parse(JSON.stringify(providers)), defaultId: defaultId, statuses: statuses };
     window.__settings = st;
-
     let users = [];
     try {
       const u = await api('/api/subsonic/users');
       users = u.users || u.items || [];
     } catch(_){}
-
     box.innerHTML = ''
       + renderStorageForm(window.__providerState)
       + renderSubsonicPanel(users)
@@ -1719,7 +1744,6 @@ async function loadSettings(){
           { key: 'subsonic_user', label: '默认 Subsonic 用户名', value: st.subsonic_user, placeholder: 'fire' },
           { key: 'subsonic_pass', label: '默认 Subsonic 密码（留空=不改）', value: '', type: 'password', placeholder: '••••••' }
         ], 'cache');
-
     bindStorageForm();
     bindSubsonicPanel();
     bindSectionSaves();
@@ -1765,11 +1789,8 @@ function collectSection(sectionId){
   if (!card) return {};
   const data = {};
   card.querySelectorAll('[data-key]').forEach(function(el){
-    if (el.type === 'checkbox'){
-      data[el.dataset.key] = el.checked ? 'true' : 'false';
-    } else {
-      data[el.dataset.key] = el.value;
-    }
+    if (el.type === 'checkbox') data[el.dataset.key] = el.checked ? 'true' : 'false';
+    else data[el.dataset.key] = el.value;
   });
   return data;
 }
@@ -1810,7 +1831,6 @@ function renderSubsonicPanel(users){
       + '<button class="btn-ghost btn-sub-del" data-user="' + esc(u.username) + '">删除</button>'
       + '</div>';
   }).join('') || '<div style="padding:12px 0;color:var(--text-3);font-size:13px">暂无 Subsonic 账号</div>';
-
   return '<div class="card" data-section="subsonic" style="margin-bottom:16px">'
     + '<div style="display:flex;align-items:center;margin-bottom:12px">'
     +   '<div style="font-weight:600;font-size:14px">Subsonic 账号</div>'
@@ -1841,7 +1861,6 @@ function bindSubsonicPanel(){
       await loadSettings();
     } catch (e){ toast('创建失败：' + e.message, 'err'); }
   });
-
   document.querySelectorAll('.btn-sub-del').forEach(function(btn){
     btn.addEventListener('click', async function(){
       const user = btn.dataset.user;
@@ -1853,7 +1872,6 @@ function bindSubsonicPanel(){
       } catch (e){ toast('删除失败：' + e.message, 'err'); }
     });
   });
-
   document.querySelectorAll('.btn-sub-reset').forEach(function(btn){
     btn.addEventListener('click', async function(){
       const user = btn.dataset.user;
@@ -1894,10 +1912,8 @@ async function addToPlaylist(){
     });
     toast('已加入 ' + ids.length + ' 首', 'ok');
     state.selected.clear();
-    await loadPlaylistTracks(pl.id);
-    await loadPlaylists();
-    renderSidebar();
-    applyFilter();
+    await loadPlaylistTracks(pl.id); await loadPlaylists();
+    renderSidebar(); applyFilter();
   } catch (e){ toast('失败：' + e.message, 'err'); }
 }
 
@@ -1914,10 +1930,8 @@ async function removeFromPlaylist(){
     });
     toast('已移除 ' + ids.length + ' 首', 'ok');
     state.selected.clear();
-    await loadPlaylistTracks(pl.id);
-    await loadPlaylists();
-    renderSidebar();
-    applyFilter();
+    await loadPlaylistTracks(pl.id); await loadPlaylists();
+    renderSidebar(); applyFilter();
   } catch (e){ toast('失败：' + e.message, 'err'); }
 }
 
@@ -1927,34 +1941,24 @@ async function deleteSongs(){
   if (!confirm('确定删除选中的 ' + ids.length + ' 首歌曲？此操作不可恢复。')) return;
   try {
     await api('/api/songs', {
-      method: 'DELETE',
-      headers: {'Content-Type':'application/json'},
+      method: 'DELETE', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ song_ids: ids }),
     });
     toast('已删除 ' + ids.length + ' 首', 'ok');
     state.selected.clear();
-    await loadSongs();
-    applyFilter();
+    await loadSongs(); applyFilter();
   } catch (e){ toast('删除失败：' + e.message, 'err'); }
 }
 
 // ==================== 播放器 ====================
 
 const audio = $('#player');
-
-const player = {
-  queue: [],
-  index: -1,
-  mode: 'list',
-};
-
+const player = { queue: [], index: -1, mode: 'list' };
 const MODE_ORDER = ['list', 'single', 'shuffle', 'sequential'];
-const MODE_LABEL = {
-  list: '列表循环',
-  single: '单曲循环',
-  shuffle: '随机播放',
-  sequential: '顺序播放',
-};
+const MODE_LABEL = { list: '列表循环', single: '单曲循环', shuffle: '随机播放', sequential: '顺序播放' };
+
+let currentLyrics = [];
+let currentLyricIdx = -1;
 
 function shuffleArray(a) {
   for (let i = a.length - 1; i > 0; i--) {
@@ -1968,13 +1972,8 @@ function startPlay(song, queue) {
   if (!song) return;
   const list = queue || state.filtered || [];
   const idx = list.findIndex(x => x.id === song.id);
-  if (idx < 0) {
-    player.queue = [song];
-    player.index = 0;
-  } else {
-    player.queue = list.slice();
-    player.index = idx;
-  }
+  if (idx < 0) { player.queue = [song]; player.index = 0; }
+  else { player.queue = list.slice(); player.index = idx; }
   if (player.mode === 'shuffle') {
     const rest = player.queue.filter((_, i) => i !== player.index);
     shuffleArray(rest);
@@ -1996,6 +1995,8 @@ function playCurrent() {
 
   $('#pl-title').textContent = s.title || '(无标题)';
   $('#pl-artist').textContent = s.artist || '—';
+  updateNPMeta(s);
+
   audio.src = '/api/songs/' + encodeURIComponent(s.id) + '/stream';
   audio.play().catch(() => toast('播放失败', 'err'));
   $('#player-bar').classList.add('show');
@@ -2003,6 +2004,7 @@ function playCurrent() {
   updatePlayIcon();
   renderQueue();
   savePlayerState();
+  loadLyrics(s.id);
 }
 
 function playPrev() {
@@ -2016,9 +2018,7 @@ function playPrev() {
       player.queue = [...rest, cur];
       player.index = player.queue.length - 2;
       if (player.index < 0) player.index = 0;
-    } else {
-      player.index--;
-    }
+    } else player.index--;
   } else {
     if (player.index <= 0) player.index = player.queue.length - 1;
     else player.index--;
@@ -2029,28 +2029,18 @@ function playPrev() {
 function playNext(auto) {
   if (!player.queue.length) return;
   if (player.mode === 'single' && auto) {
-    audio.currentTime = 0;
-    audio.play();
-    return;
+    audio.currentTime = 0; audio.play(); return;
   }
   if (player.index >= player.queue.length - 1) {
     if (player.mode === 'sequential' && auto) {
       audio.pause();
       state.playingId = null;
-      updatePlayIcon();
-      render();
-      renderQueue();
+      updatePlayIcon(); render(); renderQueue();
       return;
     }
-    if (player.mode === 'shuffle') {
-      shuffleArray(player.queue);
-      player.index = 0;
-    } else {
-      player.index = 0;
-    }
-  } else {
-    player.index++;
-  }
+    if (player.mode === 'shuffle') { shuffleArray(player.queue); player.index = 0; }
+    else player.index = 0;
+  } else player.index++;
   playCurrent();
 }
 
@@ -2060,26 +2050,21 @@ function cyclePlayMode() {
   const btn = $('#btn-playmode');
   btn.dataset.mode = player.mode;
   btn.title = '播放模式：' + MODE_LABEL[player.mode];
+  const npBtn = $('#np-mode');
+  if (npBtn) npBtn.dataset.mode = player.mode;
   toast('播放模式：' + MODE_LABEL[player.mode], 'ok');
   if (player.mode !== 'shuffle' && player.queue.length) {
-    const cur = player.queue[player.index];
+    const curSong = player.queue[player.index];
     const list = state.filtered || [];
-    const idx = list.findIndex(x => x.id === cur.id);
-    if (idx >= 0) {
-      player.queue = list.slice();
-      player.index = idx;
-    }
+    const idx = list.findIndex(x => x.id === curSong.id);
+    if (idx >= 0) { player.queue = list.slice(); player.index = idx; }
   }
-  renderQueue();
-  savePlayerState();
+  renderQueue(); savePlayerState();
 }
 
 function savePlayerState() {
   try {
-    localStorage.setItem('musicon_player', JSON.stringify({
-      mode: player.mode,
-      songId: state.playingId,
-    }));
+    localStorage.setItem('musicon_player', JSON.stringify({ mode: player.mode, songId: state.playingId }));
   } catch(e){}
 }
 
@@ -2091,10 +2076,9 @@ function restorePlayerState() {
     if (s.mode && MODE_ORDER.includes(s.mode)) {
       player.mode = s.mode;
       const btn = $('#btn-playmode');
-      if (btn) {
-        btn.dataset.mode = player.mode;
-        btn.title = '播放模式：' + MODE_LABEL[player.mode];
-      }
+      if (btn) { btn.dataset.mode = player.mode; btn.title = '播放模式：' + MODE_LABEL[player.mode]; }
+      const npBtn = $('#np-mode');
+      if (npBtn) npBtn.dataset.mode = player.mode;
     }
   } catch(e){}
 }
@@ -2130,6 +2114,8 @@ function updatePlayIcon(){
   const playing = !audio.paused;
   if ($('#icon-play')) $('#icon-play').style.display = playing ? 'none' : '';
   if ($('#icon-pause')) $('#icon-pause').style.display = playing ? '' : 'none';
+  if ($('#np-icon-play')) $('#np-icon-play').style.display = playing ? 'none' : '';
+  if ($('#np-icon-pause')) $('#np-icon-pause').style.display = playing ? '' : 'none';
   document.querySelectorAll('.play-btn').forEach(function(btn){
     const isCur = btn.dataset.id === state.playingId;
     btn.classList.toggle('playing', isCur && playing);
@@ -2138,6 +2124,145 @@ function updatePlayIcon(){
     r.classList.toggle('playing', r.dataset.id === state.playingId);
   });
 }
+
+// ==================== 全屏播放页 ====================
+
+function openNP() {
+  const s = player.queue[player.index];
+  if (!s) return;
+  $('#np-page').classList.add('show');
+  updateNPMeta(s);
+  renderLyrics();
+}
+
+function closeNP() {
+  $('#np-page').classList.remove('show');
+}
+
+function updateNPMeta(s) {
+  if (!s) return;
+  $('#np-song-title').textContent = s.title || '(无标题)';
+  $('#np-song-artist').textContent = (s.artist || '—') + (s.album ? ' · ' + s.album : '');
+  const big = coverUrlBig(s);
+  const imgEl = $('#np-cover');
+  const fbEl = $('#np-cover-fallback');
+  const bgEl = $('#np-bg');
+  if (big) {
+    imgEl.src = big;
+    imgEl.style.display = '';
+    fbEl.style.display = 'none';
+    bgEl.style.backgroundImage = 'url("' + big + '")';
+  } else {
+    imgEl.style.display = 'none';
+    fbEl.style.display = 'flex';
+    fbEl.textContent = initialOf(s);
+    bgEl.style.backgroundImage = 'none';
+  }
+}
+
+function parseLRC(text) {
+  if (!text) return [];
+  const lines = [];
+  const re = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  const rawLines = text.split('\n');
+  for (const raw of rawLines) {
+    const line = raw.trim();
+    if (!line) continue;
+    let m;
+    let matched = false;
+    re.lastIndex = 0;
+    const matches = [];
+    while ((m = re.exec(line)) !== null) { matches.push(m); }
+    if (!matches.length) {
+      if (!/^\[[a-z]+:/i.test(line)) lines.push({ start: -1, text: line });
+      continue;
+    }
+    const textPart = line.replace(re, '').trim();
+    if (!textPart) continue;
+    for (const mm of matches) {
+      const min = parseInt(mm[1], 10);
+      const sec = parseInt(mm[2], 10);
+      let frac = mm[3] || '0';
+      while (frac.length < 3) frac += '0';
+      frac = frac.slice(0, 3);
+      const start = (min * 60 + sec) * 1000 + parseInt(frac, 10);
+      lines.push({ start, text: textPart });
+    }
+  }
+  lines.sort((a, b) => a.start - b.start);
+  return lines;
+}
+
+async function loadLyrics(songId) {
+  currentLyrics = [];
+  currentLyricIdx = -1;
+  $('#np-lyrics').innerHTML = '<div class="np-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>加载中…</div>';
+  try {
+    const d = await api('/api/songs/' + encodeURIComponent(songId) + '/lyric');
+    const lyric = (d && d.lyric) || '';
+    if (!lyric.trim()) {
+      currentLyrics = [];
+      $('#np-lyrics').innerHTML = '<div class="np-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>暂无歌词</div>';
+      return;
+    }
+    currentLyrics = parseLRC(lyric);
+    if (!currentLyrics.length) {
+      $('#np-lyrics').innerHTML = '<div class="np-empty">暂无歌词</div>';
+      return;
+    }
+    renderLyrics();
+    updateLyricHighlight(audio.currentTime * 1000);
+  } catch (e) {
+    currentLyrics = [];
+    $('#np-lyrics').innerHTML = '<div class="np-empty">歌词加载失败</div>';
+  }
+}
+
+function renderLyrics() {
+  const box = $('#np-lyrics');
+  if (!currentLyrics.length) {
+    box.innerHTML = '<div class="np-empty">暂无歌词</div>';
+    return;
+  }
+  box.innerHTML = currentLyrics.map((ln, i) =>
+    '<div class="np-lyric-line" data-idx="' + i + '"' + (ln.start >= 0 ? ' data-start="' + ln.start + '"' : '') + '>' + esc(ln.text) + '</div>'
+  ).join('');
+  box.querySelectorAll('.np-lyric-line').forEach(el => {
+    el.addEventListener('click', () => {
+      const st = parseInt(el.dataset.start, 10);
+      if (!isNaN(st) && st >= 0) {
+        audio.currentTime = st / 1000;
+      }
+    });
+  });
+}
+
+function updateLyricHighlight(ms) {
+  if (!currentLyrics.length) return;
+  const box = $('#np-lyrics');
+  if (!box) return;
+  let idx = -1;
+  for (let i = 0; i < currentLyrics.length; i++) {
+    if (currentLyrics[i].start >= 0 && currentLyrics[i].start <= ms) idx = i;
+    else if (currentLyrics[i].start >= 0) break;
+  }
+  if (idx === currentLyricIdx) return;
+  const prev = box.querySelector('.np-lyric-line.active');
+  if (prev) prev.classList.remove('active');
+  if (idx >= 0) {
+    const el = box.querySelector('.np-lyric-line[data-idx="' + idx + '"]');
+    if (el) {
+      el.classList.add('active');
+      const elTop = el.offsetTop;
+      const elH = el.offsetHeight;
+      const boxH = box.clientHeight;
+      box.scrollTop = elTop - boxH / 2 + elH / 2;
+    }
+  }
+  currentLyricIdx = idx;
+}
+
+// ==================== 事件 ====================
 
 $('#btn-play-pause').addEventListener('click', () => {
   if (!audio.src) {
@@ -2149,12 +2274,8 @@ $('#btn-play-pause').addEventListener('click', () => {
 $('#btn-prev').addEventListener('click', playPrev);
 $('#btn-next').addEventListener('click', () => playNext(false));
 $('#btn-playmode').addEventListener('click', cyclePlayMode);
-$('#btn-queue').addEventListener('click', () => {
-  $('#queue-panel').classList.toggle('show');
-});
-$('#btn-close-queue').addEventListener('click', () => {
-  $('#queue-panel').classList.remove('show');
-});
+$('#btn-queue').addEventListener('click', () => { $('#queue-panel').classList.toggle('show'); });
+$('#btn-close-queue').addEventListener('click', () => { $('#queue-panel').classList.remove('show'); });
 $('#queue-list').addEventListener('click', e => {
   const it = e.target.closest('.queue-item');
   if (!it) return;
@@ -2167,6 +2288,24 @@ $('#pl-seek').addEventListener('input', e => {
   if (audio.duration) audio.currentTime = audio.duration * e.target.value / 100;
 });
 
+// 点击播放条封面或歌名打开全屏
+$('#pl-cover').addEventListener('click', openNP);
+$('#pl-meta').addEventListener('click', openNP);
+
+// 全屏页事件
+$('#np-close').addEventListener('click', closeNP);
+$('#np-play').addEventListener('click', () => {
+  if (!audio.src) return;
+  if (audio.paused) audio.play(); else audio.pause();
+});
+$('#np-prev').addEventListener('click', playPrev);
+$('#np-next').addEventListener('click', () => playNext(false));
+$('#np-mode').addEventListener('click', cyclePlayMode);
+$('#np-queue').addEventListener('click', () => { $('#queue-panel').classList.toggle('show'); });
+$('#np-seek').addEventListener('input', e => {
+  if (audio.duration) audio.currentTime = audio.duration * e.target.value / 100;
+});
+
 audio.addEventListener('play', updatePlayIcon);
 audio.addEventListener('pause', updatePlayIcon);
 audio.addEventListener('timeupdate', () => {
@@ -2174,19 +2313,20 @@ audio.addEventListener('timeupdate', () => {
   $('#pl-cur').textContent = fmtDuration(c);
   $('#pl-dur').textContent = fmtDuration(d);
   if (d) $('#pl-seek').value = Math.round(c / d * 100);
+  $('#np-cur').textContent = fmtDuration(c);
+  $('#np-dur').textContent = fmtDuration(d);
+  if (d) $('#np-seek').value = Math.round(c / d * 100);
+  updateLyricHighlight(c * 1000);
 });
-audio.addEventListener('ended', () => {
-  playNext(true);
-});
+audio.addEventListener('ended', () => { playNext(true); });
 
 restorePlayerState();
 
-// ==================== 事件绑定 ====================
+// ==================== 列表 / 视图事件 ====================
 
 $('#nav-all').addEventListener('click', selectAllView);
 if ($('#nav-artists')) $('#nav-artists').addEventListener('click', function(){ state.filterArtist = null; _lastArtistHeaderName = null; switchMainView('artists'); });
 if ($('#nav-albums')) $('#nav-albums').addEventListener('click', function(){ state.filterAlbum = null; _lastArtistHeaderName = null; switchMainView('albums'); });
-
 if ($('#artists-search')) $('#artists-search').addEventListener('input', debounce(renderArtists, 150));
 if ($('#albums-search')) $('#albums-search').addEventListener('input', debounce(renderAlbums, 150));
 
@@ -2200,10 +2340,7 @@ if ($('#artists-body')) $('#artists-body').addEventListener('click', function(e)
   state.selected.clear();
   _lastArtistHeaderName = null;
   switchMainView('songs');
-  renderSidebar();
-  setViewTitle();
-  applyFilter();
-  saveUIState();
+  renderSidebar(); setViewTitle(); applyFilter(); saveUIState();
 });
 
 if ($('#albums-body')) $('#albums-body').addEventListener('click', function(e){
@@ -2216,12 +2353,11 @@ if ($('#albums-body')) $('#albums-body').addEventListener('click', function(e){
   state.selected.clear();
   _lastArtistHeaderName = null;
   switchMainView('songs');
-  renderSidebar();
-  setViewTitle();
+  renderSidebar(); setViewTitle();
   $('#view-title').textContent = '专辑：' + state.filterAlbum;
-  applyFilter();
-  saveUIState();
+  applyFilter(); saveUIState();
 });
+
 $('#nav-tasks').addEventListener('click', () => switchMainView('tasks'));
 $('#nav-settings').addEventListener('click', () => switchMainView('settings'));
 
@@ -2238,8 +2374,7 @@ $('#pl-list').addEventListener('click', async e => {
       await api('/api/playlists/' + encodeURIComponent(id), { method: 'DELETE' });
       toast('歌单已删除', 'ok');
       if (state.activePlaylistId === id) selectAllView();
-      await loadPlaylists();
-      renderSidebar();
+      await loadPlaylists(); renderSidebar();
     } catch (err){ toast('删除失败：' + err.message, 'err'); }
     return;
   }
@@ -2267,10 +2402,7 @@ $('#list-body').addEventListener('click', e => {
     state.selected.clear();
     _lastArtistHeaderName = null;
     switchMainView('songs');
-    renderSidebar();
-    setViewTitle();
-    applyFilter();
-    saveUIState();
+    renderSidebar(); setViewTitle(); applyFilter(); saveUIState();
     return;
   }
   const alink = e.target.closest('.album-link');
@@ -2285,11 +2417,9 @@ $('#list-body').addEventListener('click', e => {
     state.selected.clear();
     _lastArtistHeaderName = null;
     switchMainView('songs');
-    renderSidebar();
-    setViewTitle();
+    renderSidebar(); setViewTitle();
     $('#view-title').textContent = '专辑：' + state.filterAlbum;
-    applyFilter();
-    saveUIState();
+    applyFilter(); saveUIState();
     return;
   }
   const pbtn = e.target.closest('.play-btn');
@@ -2340,10 +2470,7 @@ document.addEventListener('click', function(e){
   state.view = 'all';
   state.selected.clear();
   _lastArtistHeaderName = null;
-  renderSidebar();
-  setViewTitle();
-  buildFilterOptions();
-  applyFilter();
+  renderSidebar(); setViewTitle(); buildFilterOptions(); applyFilter();
   setTimeout(function(){
     const sel = document.getElementById('ab-playlist-select');
     if (sel) sel.value = targetPlaylistId;
@@ -2366,14 +2493,8 @@ $('#btn-online-search').addEventListener('click', openOnlineModal);
 $('#online-close').addEventListener('click', closeOnlineModal);
 $('#online-search-btn').addEventListener('click', doOnlineSearch);
 $('#online-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') doOnlineSearch(); });
-$('#online-select-all').addEventListener('click', () => {
-  state.onlineResults.forEach((_, i) => state.onlineSelected.add(i));
-  renderOnlineResults();
-});
-$('#online-select-none').addEventListener('click', () => {
-  state.onlineSelected.clear();
-  renderOnlineResults();
-});
+$('#online-select-all').addEventListener('click', () => { state.onlineResults.forEach((_, i) => state.onlineSelected.add(i)); renderOnlineResults(); });
+$('#online-select-none').addEventListener('click', () => { state.onlineSelected.clear(); renderOnlineResults(); });
 $('#online-import').addEventListener('click', importOnlineSelected);
 $('#online-modal').addEventListener('click', e => { if (e.target.id === 'online-modal') closeOnlineModal(); });
 $('#online-body').addEventListener('click', e => {
@@ -2397,22 +2518,16 @@ $('#scan-up').addEventListener('click', function(){
   scanLoadDir('/' + parts.join('/'));
 });
 $('#scan-submit').addEventListener('click', async function(){
-  if (!scanCurPath || scanCurPath === '/') {
-    toast('请进入具体的音乐目录再选择', 'err');
-    return;
-  }
+  if (!scanCurPath || scanCurPath === '/') { toast('请进入具体的音乐目录再选择', 'err'); return; }
   try {
     await api('/api/scan', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ path: scanCurPath, mode: 'full', source: 'alist-1' })
     });
     toast('扫描任务已创建', 'ok');
     $('#scan-modal').classList.remove('show');
     await loadTasks();
-  } catch (e) {
-    toast('创建失败：' + e.message, 'err');
-  }
+  } catch (e) { toast('创建失败：' + e.message, 'err'); }
 });
 $('#scan-cancel').addEventListener('click', () => $('#scan-modal').classList.remove('show'));
 $('#scan-modal').addEventListener('click', e => { if (e.target.id === 'scan-modal') e.target.classList.remove('show'); });
@@ -2421,6 +2536,7 @@ $('#btn-refresh-settings').addEventListener('click', loadSettings);
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape'){
+    if ($('#np-page').classList.contains('show')) { closeNP(); return; }
     if (state.selected.size){ state.selected.clear(); render(); }
     $('#scan-modal').classList.remove('show');
     $('#pl-modal').classList.remove('show');
@@ -2470,27 +2586,18 @@ async function createPlaylist(){
     $('#pl-new-name').value = '';
     $('#pl-new-comment').value = '';
     $('#pl-new-public').checked = false;
-    await loadPlaylists();
-    renderSidebar();
-  } catch (e){
-    toast('创建失败：' + e.message, 'err');
-  } finally {
-    $('#pl-submit').disabled = false;
-  }
+    await loadPlaylists(); renderSidebar();
+  } catch (e){ toast('创建失败：' + e.message, 'err'); }
+  finally { $('#pl-submit').disabled = false; }
 }
 
 async function boot(){
   try {
     try {
       const sess = await fetch('/api/web-auth/session', {credentials:'same-origin'});
-      if (sess.status === 401){
-        showLoginModal();
-        return;
-      }
+      if (sess.status === 401){ showLoginModal(); return; }
     } catch(e){}
-
     await Promise.all([loadSongs(), loadPlaylists()]);
-
     const saved = loadUIState();
     if (saved){
       if (saved.pageSize) state.pageSize = saved.pageSize;
@@ -2506,17 +2613,12 @@ async function boot(){
       }
       if (saved.pageSize && $('#page-size')) $('#page-size').value = String(saved.pageSize);
     }
-
     renderSidebar();
     buildFilterOptions();
     if (saved && saved.page) state.page = saved.page;
     applyFilter();
-
-    if (saved && saved.mainView && saved.mainView !== 'songs'){
-      switchMainView(saved.mainView);
-    } else {
-      setViewTitle();
-    }
+    if (saved && saved.mainView && saved.mainView !== 'songs') switchMainView(saved.mainView);
+    else setViewTitle();
   } catch (e){
     $('#list-body').innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
   }
@@ -2527,15 +2629,9 @@ $('#btn-new-playlist').addEventListener('click', () => {
 });
 $('#pl-cancel').addEventListener('click', () => $('#pl-modal').classList.remove('show'));
 $('#pl-submit').addEventListener('click', createPlaylist);
-$('#pl-modal').addEventListener('click', e => {
-  if (e.target.id === 'pl-modal') e.target.classList.remove('show');
-});
-$('#pl-new-name').addEventListener('keydown', e => {
-  if (e.key === 'Enter') createPlaylist();
-});
-$('#pl-new-comment').addEventListener('keydown', e => {
-  if (e.key === 'Enter') createPlaylist();
-});
+$('#pl-modal').addEventListener('click', e => { if (e.target.id === 'pl-modal') e.target.classList.remove('show'); });
+$('#pl-new-name').addEventListener('keydown', e => { if (e.key === 'Enter') createPlaylist(); });
+$('#pl-new-comment').addEventListener('keydown', e => { if (e.key === 'Enter') createPlaylist(); });
 
 boot();
 })();
