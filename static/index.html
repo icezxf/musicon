@@ -1479,8 +1479,9 @@ async function loadTasks(){
         try {
           await api('/api/scan', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ path: path, mode: 'full', source: 'alist-1' }) });
-          toast('已重新创建扫描任务', 'ok');
+          toast('已重新创建扫描任务，正在后台执行…', 'ok');
           await loadTasks();
+          startScanPolling();
         } catch (e){ toast('失败：' + e.message, 'err'); }
       });
     });
@@ -2163,6 +2164,8 @@ function openNP() {
   $('#np-page').classList.add('show');
   updateNPMeta(s);
   renderLyrics();
+  // 进入详情页时自动打开右侧播放队列
+  toggleQueue(true);
 }
 
 function closeNP() {
@@ -2300,6 +2303,65 @@ function toggleQueue(force) {
   document.body.classList.toggle('queue-open', show);
 }
 
+// ==================== 扫描任务轮询 ====================
+
+let scanPollTimer = null;
+let scanPollTimeout = null;
+
+function startScanPolling() {
+  stopScanPolling();
+  let lastTaskId = null;
+
+  scanPollTimer = setInterval(async () => {
+    try {
+      const d = await api('/api/tasks');
+      const tasks = d.tasks || d.items || [];
+      if (!tasks.length) return;
+
+      const latest = tasks[0];
+      const st = String(latest.status || '').toLowerCase();
+      const tid = latest.id || '';
+
+      if (tid !== lastTaskId) {
+        lastTaskId = tid;
+      }
+
+      if (st === 'running' || st === 'pending') {
+        return;
+      }
+
+      if (st === 'done' || st === 'success') {
+        stopScanPolling();
+        await loadSongs();
+        await loadPlaylists();
+        renderSidebar();
+        buildFilterOptions();
+        applyFilter();
+        toast('扫描完成，已自动刷新', 'ok');
+      } else if (st === 'failed' || st === 'error') {
+        stopScanPolling();
+        toast('扫描失败，请查看任务中心', 'err');
+      }
+    } catch(e) {
+      // 忽略轮询错误，继续等
+    }
+  }, 2000);
+
+  // 最长轮询 10 分钟，避免卡死
+  scanPollTimeout = setTimeout(stopScanPolling, 10 * 60 * 1000);
+}
+
+function stopScanPolling() {
+  if (scanPollTimer) {
+    clearInterval(scanPollTimer);
+    scanPollTimer = null;
+  }
+  if (scanPollTimeout) {
+    clearTimeout(scanPollTimeout);
+    scanPollTimeout = null;
+  }
+}
+
 // ==================== 事件 ====================
 
 $('#btn-play-pause').addEventListener('click', () => {
@@ -2321,6 +2383,7 @@ $('#queue-list').addEventListener('click', e => {
   if (isNaN(idx) || idx === player.index) return;
   player.index = idx;
   playCurrent();
+  // 在普通页面点队列里的歌，自动关闭队列回到播放条
   if (!$('#np-page').classList.contains('show')) toggleQueue(false);
 });
 $('#pl-seek').addEventListener('input', e => {
@@ -2563,9 +2626,10 @@ $('#scan-submit').addEventListener('click', async function(){
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ path: scanCurPath, mode: 'full', source: 'alist-1' })
     });
-    toast('扫描任务已创建', 'ok');
+    toast('扫描任务已创建，正在后台执行…', 'ok');
     $('#scan-modal').classList.remove('show');
     await loadTasks();
+    startScanPolling();
   } catch (e) { toast('创建失败：' + e.message, 'err'); }
 });
 $('#scan-cancel').addEventListener('click', () => $('#scan-modal').classList.remove('show'));
