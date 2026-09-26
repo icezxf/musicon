@@ -1700,15 +1700,10 @@ function renderUserSourceList(checked){
       + '<span>' + esc(s.name) + '</span>'
       + '</label>';
   }).join('');
-  box.querySelectorAll('.src-checkbox').forEach(function(el){
-    const input = el.querySelector('input');
-    el.addEventListener('click', function(e){
-      if (e.target === input) return;
-      input.checked = !input.checked;
-      el.classList.toggle('checked', input.checked);
-    });
+  // 只监听 change 事件，让浏览器默认行为处理点击切换
+  box.querySelectorAll('.src-checkbox input').forEach(function(input){
     input.addEventListener('change', function(){
-      el.classList.toggle('checked', input.checked);
+      input.closest('.src-checkbox').classList.toggle('checked', input.checked);
     });
   });
 }
