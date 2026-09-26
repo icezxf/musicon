@@ -692,16 +692,30 @@ func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name       string `json:"name"`
-		ProviderID string `json:"provider_id"`
-		Path       string `json:"path"`
+		Name  string `json:"name"`
+		Paths []struct {
+			ProviderID string `json:"provider_id"`
+			Path       string `json:"path"`
+		} `json:"paths"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if body.Name == "" || body.ProviderID == "" || body.Path == "" {
-		writeJSON(w, 400, map[string]any{"detail": "name/provider_id/path 必填"})
+	if body.Name == "" || len(body.Paths) == 0 {
+		writeJSON(w, 400, map[string]any{"detail": "name 和至少一条路径必填"})
 		return
 	}
-	id, err := h.DB.CreateSource(body.Name, body.ProviderID, body.Path)
+	paths := make([]db.SourcePath, 0, len(body.Paths))
+	for i, p := range body.Paths {
+		if p.ProviderID == "" || p.Path == "" {
+			writeJSON(w, 400, map[string]any{"detail": "每条路径的 provider_id 和 path 必填"})
+			return
+		}
+		paths = append(paths, db.SourcePath{
+			ProviderID: p.ProviderID,
+			Path:       p.Path,
+			SortOrder:  i,
+		})
+	}
+	id, err := h.DB.CreateSource(body.Name, paths)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -712,12 +726,30 @@ func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) updateSource(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/sources/")
 	var body struct {
-		Name       string `json:"name"`
-		ProviderID string `json:"provider_id"`
-		Path       string `json:"path"`
+		Name  string `json:"name"`
+		Paths []struct {
+			ProviderID string `json:"provider_id"`
+			Path       string `json:"path"`
+		} `json:"paths"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if err := h.DB.UpdateSource(id, body.Name, body.ProviderID, body.Path); err != nil {
+	if body.Name == "" || len(body.Paths) == 0 {
+		writeJSON(w, 400, map[string]any{"detail": "name 和至少一条路径必填"})
+		return
+	}
+	paths := make([]db.SourcePath, 0, len(body.Paths))
+	for i, p := range body.Paths {
+		if p.ProviderID == "" || p.Path == "" {
+			writeJSON(w, 400, map[string]any{"detail": "每条路径的 provider_id 和 path 必填"})
+			return
+		}
+		paths = append(paths, db.SourcePath{
+			ProviderID: p.ProviderID,
+			Path:       p.Path,
+			SortOrder:  i,
+		})
+	}
+	if err := h.DB.UpdateSource(id, body.Name, paths); err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
@@ -995,23 +1027,36 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		SourceID string `json:"source_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
+
+	// 走音源扫描：遍历该音源下的所有路径
+	if body.SourceID != "" {
+		src, err := h.DB.GetSource(body.SourceID)
+		if err != nil {
+			writeJSON(w, 404, map[string]any{"detail": "音源不存在"})
+			return
+		}
+		if len(src.Paths) == 0 {
+			writeJSON(w, 400, map[string]any{"detail": "该音源没有配置任何路径"})
+			return
+		}
+		first := src.Paths[0]
+		taskID, err := h.DB.CreateScanTask(first.Path, body.Mode, first.ProviderID)
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"detail": err.Error()})
+			return
+		}
+		go h.Scan.RunMulti(taskID, src.Paths, body.SourceID)
+		writeJSON(w, 200, map[string]any{"message": "扫描任务已创建", "task_id": taskID})
+		return
+	}
+
+	// 兼容旧接口：单路径扫描
 	if body.Path == "" {
-		writeJSON(w, 400, map[string]any{"detail": "path 必填"})
+		writeJSON(w, 400, map[string]any{"detail": "path 或 source_id 必填"})
 		return
 	}
 	if body.Source == "" {
 		body.Source = "alist-1"
-	}
-	// 如果传了 source_id，用音源定义里的 path 覆盖
-	if body.SourceID != "" {
-		if src, err := h.DB.GetSource(body.SourceID); err == nil {
-			if src.ProviderID != "" {
-				body.Source = src.ProviderID
-			}
-			if src.Path != "" {
-				body.Path = src.Path
-			}
-		}
 	}
 	h.Settings.Set("last_scan_path", body.Path)
 	taskID, err := h.DB.CreateScanTask(body.Path, body.Mode, body.Source)
@@ -1019,7 +1064,7 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
-	go h.Scan.Run(taskID, body.Path, body.Source, body.SourceID)
+	go h.Scan.Run(taskID, body.Path, body.Source, "")
 	writeJSON(w, 200, map[string]any{"message": "扫描任务已创建", "task_id": taskID})
 }
 
