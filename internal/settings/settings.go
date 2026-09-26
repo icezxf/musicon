@@ -3,9 +3,9 @@ package settings
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
-	"strconv"
 )
 
 type Manager struct {
@@ -66,7 +66,6 @@ func (m *Manager) reload() {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 
-	// 别人刚 reload 过，直接返回
 	m.mu.RLock()
 	fresh := time.Since(m.loadedAt) < time.Second
 	m.mu.RUnlock()
@@ -74,7 +73,6 @@ func (m *Manager) reload() {
 		return
 	}
 
-	// 无论成功失败都更新 loadedAt，避免 DB 故障时每请求打一次
 	defer func() {
 		m.mu.Lock()
 		m.loadedAt = time.Now()
@@ -99,7 +97,7 @@ func (m *Manager) reload() {
 	m.mu.Unlock()
 }
 
-// ---------- 以下保持原有逻辑不变 ----------
+// ==================== AList 配置 ====================
 
 type AListConfig struct {
 	URL      string
@@ -109,6 +107,7 @@ type AListConfig struct {
 	Provider string
 }
 
+// GetAList 返回默认 alist 配置（兼容旧代码）
 func (m *Manager) GetAList() *AListConfig {
 	c := &AListConfig{
 		URL:   m.Get("alist_url"),
@@ -156,6 +155,74 @@ func (m *Manager) GetAList() *AListConfig {
 	}
 	return c
 }
+
+// GetAListByID 按 provider ID 读配置；id 为空/"default" 时走默认逻辑
+func (m *Manager) GetAListByID(id string) *AListConfig {
+	if id == "" || id == "default" {
+		return m.GetAList()
+	}
+	c := &AListConfig{Provider: id}
+	raw := m.Get("storage_providers")
+	if raw == "" {
+		return m.GetAList()
+	}
+	var list []struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Config struct {
+			BaseURL         string `json:"base_url"`
+			RefreshUsername string `json:"refresh_username"`
+			RefreshPassword string `json:"refresh_password"`
+			Token           string `json:"token"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return m.GetAList()
+	}
+	for _, p := range list {
+		if p.ID != id || p.Type != "alist" {
+			continue
+		}
+		c.URL = p.Config.BaseURL
+		c.User = p.Config.RefreshUsername
+		c.Pass = p.Config.RefreshPassword
+		c.Token = p.Config.Token
+		return c
+	}
+	return m.GetAList()
+}
+
+// SetAListTokenByID 把 token 写回 storage_providers JSON 对应位置
+func (m *Manager) SetAListTokenByID(id, tok string) error {
+	raw := m.Get("storage_providers")
+	if raw == "" {
+		return m.Set("alist_token", tok)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return m.Set("alist_token", tok)
+	}
+	changed := false
+	for _, p := range list {
+		if pid, _ := p["id"].(string); pid == id {
+			cfg, _ := p["config"].(map[string]any)
+			if cfg == nil {
+				cfg = map[string]any{}
+			}
+			cfg["token"] = tok
+			p["config"] = cfg
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return m.Set("alist_token", tok)
+	}
+	b, _ := json.Marshal(list)
+	return m.Set("storage_providers", string(b))
+}
+
+// ==================== 其他配置 ====================
 
 func (m *Manager) GetScanPath() string {
 	if v := m.Get("last_scan_path"); v != "" {
