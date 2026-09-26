@@ -37,13 +37,13 @@ import (
 
 type Handler struct {
 	DB    *db.Holder
-	AList *alist.Client
+	AList *alist.Manager
 	LX    *lx.Client
 	NCM   *ncm.Client
 	Cfg   *config.Config
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, n *ncm.Client, c *config.Config) *Handler {
+func New(database *db.Holder, a *alist.Manager, l *lx.Client, n *ncm.Client, c *config.Config) *Handler {
 	return &Handler{DB: database, AList: a, LX: l, NCM: n, Cfg: c}
 }
 
@@ -63,14 +63,17 @@ var rawURLCache = struct {
 	m  map[string]cachedURL
 }{m: map[string]cachedURL{}}
 
-func (h *Handler) getCachedRawURL(songID, path string) (string, error) {
+func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, error) {
 	rawURLCache.mu.RLock()
 	c, ok := rawURLCache.m[songID]
 	rawURLCache.mu.RUnlock()
 	if ok && time.Now().Before(c.expiresAt) {
 		return c.url, nil
 	}
-	u, err := h.AList.GetRawURL(path)
+	if providerID == "" {
+		providerID = "alist-1"
+	}
+	u, err := h.AList.Get(providerID).GetRawURL(path)
 	if err != nil {
 		return "", err
 	}
@@ -815,7 +818,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// HEAD 本地返回元数据头（CDN 拒绝 HEAD）
 	if r.Method == http.MethodHead {
 		w.Header().Set("Content-Type", contentTypeForFmt(s.Fmt))
 		w.Header().Set("Accept-Ranges", "bytes")
@@ -840,7 +842,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 虚拟歌曲（LX 在线歌曲）：从 LX 拿真实 URL
 	if s.Fmt == "VIRTUAL" || strings.HasPrefix(s.ID, "lxv-") {
 		u, err := h.lxPlayURL(s)
 		if err != nil {
@@ -852,8 +853,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 网盘歌曲：302 到 CDN
-	rawURL, err := h.getCachedRawURL(s.ID, s.Path)
+	rawURL, err := h.getCachedRawURL(s.ID, s.ProviderID, s.Path)
 	if err != nil {
 		h.writeErr(w, r, 0, err.Error())
 		return
@@ -869,7 +869,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
-// lxPlayURL 从虚拟歌曲 ID 反解出 source/songmid，调 LX 拿真实 URL
 func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
 	rest := strings.TrimPrefix(s.ID, "lxv-")
 	parts := strings.SplitN(rest, "-", 2)
@@ -892,7 +891,6 @@ func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
 	return h.LX.GetSongURL(songInfo, "320k")
 }
 
-// parseRangeHeader 解析 HTTP Range 头
 func parseRangeHeader(h string, size int64) (int64, int64, bool) {
 	if !strings.HasPrefix(h, "bytes=") {
 		return 0, 0, false
@@ -978,14 +976,12 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = h.resolveArtistName(id)
 		}
-		// 优先 ncm
 		if h.NCM != nil && name != "" {
 			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 				proxyImage(w, d.Pic)
 				return
 			}
 		}
-		// 回退 lx
 		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
 			proxyImage(w, d.Pic)
 			return
@@ -1167,9 +1163,6 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createPlaylist 支持：
-//   1. 传 playlistId + songId[] → 往已有歌单添加歌曲
-//   2. 只传 name（+可选 songId[]）→ 新建歌单
 func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
@@ -1180,7 +1173,6 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
 		songIDs = r.URL.Query()["songId"]
 	}
 
-	// 场景 1：往已有歌单添加歌曲
 	if plID != "" {
 		p, err := h.DB.GetPlaylist(plID)
 		if err != nil {
@@ -1209,7 +1201,6 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 场景 2：新建歌单
 	if name == "" {
 		h.writeErr(w, r, 10, "Required parameter is missing: name")
 		return
@@ -1256,7 +1247,6 @@ func (h *Handler) updatePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 重命名 / 改注释 / 改公开状态
 	if name := r.FormValue("name"); name != "" {
 		h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, name, id)
 	}
@@ -1406,14 +1396,12 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, key stri
 	hasPic := false
 
 	if name != "" {
-		// 优先 ncm
 		if h.NCM != nil {
 			if d, err := h.NCM.GetArtistDetail(name); err == nil {
 				bio = d.Bio
 				hasPic = d.Pic != ""
 			}
 		}
-		// 回退 lx
 		if !hasPic && bio == "" {
 			if d, err := h.LX.GetSingerDetail(name); err == nil {
 				if bio == "" {
@@ -1486,7 +1474,6 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	name := h.resolveArtistName(id)
 
-	// 优先 ncm
 	if h.NCM != nil && name != "" {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 			proxyImage(w, d.Pic)
@@ -1494,7 +1481,6 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 回退 lx
 	if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
 		proxyImage(w, d.Pic)
 		return
