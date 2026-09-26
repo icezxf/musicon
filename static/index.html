@@ -1398,7 +1398,7 @@ function switchMainView(name){
   $('#actionbar').classList.toggle('show', state.selected.size > 0 && name === 'songs');
   setViewTitle();
   if (name === 'tasks') loadTasks();
-  if (name === 'users') loadUsers();
+  if (name === 'users') { loadUsers().then(() => renderUsers()); }
   if (name === 'settings') loadSettings();
   if (name === 'artists' && typeof renderArtists === 'function') renderArtists();
   if (name === 'albums' && typeof renderAlbums === 'function') renderAlbums();
