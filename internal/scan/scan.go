@@ -33,7 +33,7 @@ type Scanner struct {
 	WG       *sync.WaitGroup
 }
 
-// Run 扫描：providerID 决定用哪个 AList；sourceID 决定歌曲归属哪个音源
+// Run 单路径扫描（兼容旧接口）
 func (s *Scanner) Run(taskID, rootPath, providerID, sourceID string) {
 	if s.WG != nil {
 		s.WG.Add(1)
@@ -54,6 +54,32 @@ func (s *Scanner) Run(taskID, rootPath, providerID, sourceID string) {
 	s.walk(taskID, rootPath, providerID, sourceID, &total, &processed)
 	s.DB.SetTaskStatus(taskID, "done")
 	log.Printf("[scan] done %s total=%d processed=%d", taskID, total, processed)
+}
+
+// RunMulti 多路径扫描（音源含多条路径时调用）
+func (s *Scanner) RunMulti(taskID string, paths []db.SourcePath, sourceID string) {
+	if s.WG != nil {
+		s.WG.Add(1)
+		defer s.WG.Done()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[scan] panic: %v\n%s", r, debug.Stack())
+			s.DB.SetTaskStatus(taskID, "failed")
+		}
+	}()
+	log.Printf("[scan] start-multi %s paths=%d source=%s", taskID, len(paths), sourceID)
+	total := 0
+	processed := 0
+	for i, p := range paths {
+		if p.ProviderID == "" || p.Path == "" {
+			continue
+		}
+		log.Printf("[scan] [%d/%d] path=%s provider=%s", i+1, len(paths), p.Path, p.ProviderID)
+		s.walk(taskID, p.Path, p.ProviderID, sourceID, &total, &processed)
+	}
+	s.DB.SetTaskStatus(taskID, "done")
+	log.Printf("[scan] done-multi %s total=%d processed=%d", taskID, total, processed)
 }
 
 func (s *Scanner) walk(taskID, dir, providerID, sourceID string, total, processed *int) {
