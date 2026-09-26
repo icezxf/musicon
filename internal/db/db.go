@@ -32,8 +32,6 @@ func Open(path string) (*sql.DB, error) {
 
 func Migrate(db *sql.DB) error {
 	schema := []string{
-		// 请把你现有的所有建表语句保留在这
-		// 我不清楚你的完整 schema，下面这些是常见的，你按实际保留
 		`CREATE TABLE IF NOT EXISTS songs (
 			id TEXT PRIMARY KEY,
 			title TEXT NOT NULL DEFAULT '',
@@ -111,12 +109,21 @@ func Migrate(db *sql.DB) error {
 			client TEXT NOT NULL DEFAULT '',
 			played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
-		// 新增：音源表
+		// 音源表
 		`CREATE TABLE IF NOT EXISTS sources (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			provider_id TEXT NOT NULL,
 			path TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+		)`,
+		// 新增：音源路径表（一个音源可挂多条路径）
+		`CREATE TABLE IF NOT EXISTS source_paths (
+			id TEXT PRIMARY KEY,
+			source_id TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
 		)`,
 	}
@@ -137,7 +144,6 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE songs ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE songs ADD COLUMN isrc TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE songs ADD COLUMN bpm INTEGER NOT NULL DEFAULT 0",
-		// 新增
 		"ALTER TABLE songs ADD COLUMN source_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE scan_tasks ADD COLUMN source_id TEXT NOT NULL DEFAULT ''",
 	}
