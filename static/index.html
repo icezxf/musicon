@@ -614,7 +614,7 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>在线
         </button>
         <button class="btn-primary" id="btn-add-songs-to-playlist" style="display:none" title="向当前歌单添加歌曲">+ 添加歌曲</button>
-        <select class="select" id="f-provider"><option value="">全部音源</option></select>
+        <select class="select" id="f-source"><option value="">全部音源</option></select>
         <select class="select" id="f-format"><option value="">全部格式</option></select>
         <select class="select" id="page-size">
           <option value="20">每页 20</option>
@@ -623,7 +623,7 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
           <option value="200">每页 200</option>
           <option value="999999">全部</option>
         </select>
-        <select class="select" id="f-source"><option value="">全部来源</option><option value="local">本地文件</option><option value="virtual">在线歌曲</option></select>
+        <select class="select" id="f-provider-filter"><option value="">全部 provider</option></select>
       </div>
     </header>
 
@@ -676,7 +676,7 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
     </div>
 
     <div class="list-wrap" id="view-settings" style="display:none">
-      <div style="padding:12px 0 16px;max-width:760px">
+      <div style="padding:12px 0 16px;max-width:860px">
         <div style="display:flex;gap:12px;margin-bottom:20px">
           <button class="btn-ghost" id="btn-refresh-settings">刷新</button>
         </div>
@@ -752,23 +752,37 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
   </div>
 </div>
 
+<div class="modal-bg" id="source-modal">
+  <div class="modal">
+    <div class="modal-title" id="src-modal-title">新建音源</div>
+    <input type="hidden" id="src-id">
+    <label><div class="lbl">音源名称</div><input id="src-name" class="input" placeholder="例如：流行曲" maxlength="60"></label>
+    <label><div class="lbl">AList Provider</div><select id="src-provider" class="select"></select></label>
+    <label><div class="lbl">目录路径</div><input id="src-path" class="input" placeholder="/移动/自主目录/音乐/流行曲"></label>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="src-cancel">取消</button>
+      <button class="btn-primary" id="src-submit">保存</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="scan-modal">
   <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
-    <div class="lbl">AList 音源</div>
-    <select id="scan-provider" class="select" style="width:100%;margin-bottom:12px;height:36px">
-      <option value="alist-1">alist-1</option>
+    <div class="lbl">音源</div>
+    <select id="scan-source" class="select" style="width:100%;margin-bottom:12px;height:36px">
+      <option value="">— 选择音源 —</option>
     </select>
     <div class="lbl">当前路径</div>
     <div id="scan-cur-path" style="font-family:monospace;font-size:13px;padding:10px 12px;background:#0d1016;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;word-break:break-all;color:var(--accent-h)">/</div>
     <div id="scan-tree" style="max-height:320px;overflow-y:auto;background:#0d1016;border:1px solid var(--border);border-radius:6px;padding:6px">
-      <div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">加载中…</div>
+      <div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">选择音源后自动列出其路径</div>
     </div>
     <div style="display:flex;gap:10px;margin-top:14px;justify-content:space-between">
       <button class="btn-ghost" id="scan-up">← 上级目录</button>
       <div style="display:flex;gap:10px">
         <button class="btn-ghost" id="scan-cancel">取消</button>
-        <button class="btn-primary" id="scan-submit">选择此目录扫描</button>
+        <button class="btn-primary" id="scan-submit">开始扫描</button>
       </div>
     </div>
   </div>
@@ -884,6 +898,7 @@ const state = {
   view: 'all', selected: new Set(), filtered: [], playingId: null,
   mainView: 'songs', page: 1, pageSize: 50,
   filterArtist: null, filterAlbum: null,
+  sources: [], filterSource: '',
   onlineResults: [], onlineSelected: new Set(),
 };
 
@@ -973,11 +988,10 @@ function coverUrlBig(s){
   return '';
 }
 function initialOf(s){ const t = (s.title || '').trim(); return t ? t.charAt(0).toUpperCase() : '♪'; }
-function providerLabel(p){
-  if (!p) return '';
-  if (p.startsWith('lxv-') || p.startsWith('lx-')) return '在线';
-  if (p.includes('alist')) return 'AList';
-  return p;
+function sourceName(id){
+  if (!id) return '';
+  const s = state.sources.find(x => x.id === id);
+  return s ? s.name : id;
 }
 function isVirtual(s){
   if (s.fmt === 'VIRTUAL') return true;
@@ -990,14 +1004,10 @@ function matchesFilter(s){
   if (state.filterArtist && splitArtists(combinedArtist(s)).indexOf(state.filterArtist) === -1) return false;
   if (state.filterAlbum && (s.album || '') !== state.filterAlbum) return false;
   const isV = isVirtual(s);
-  const prov = $('#f-provider') ? $('#f-provider').value : '';
-  const fmt = $('#f-format') ? $('#f-format').value : '';
   const src = $('#f-source') ? $('#f-source').value : '';
+  const fmt = $('#f-format') ? $('#f-format').value : '';
   const q = ($('#search') ? $('#search').value : '').trim().toLowerCase();
-  if (prov && isV) return false;
-  if (prov && s.provider_id !== prov) return false;
-  if (src === 'local' && isV) return false;
-  if (src === 'virtual' && !isV) return false;
+  if (src && (s.source_id || '') !== src) return false;
   if (fmt && (s.fmt || '').toUpperCase() !== fmt) return false;
   if (q){
     const hay = ((s.title||'') + ' ' + (s.artist||'') + ' ' + (s.album||'') + ' ' + (s.path||'')).toLowerCase();
@@ -1094,7 +1104,7 @@ function render(){
       ? '<img class="cover" src="' + img + '" loading="lazy" onerror="this.outerHTML=\'<div class=&quot;cover cover-fallback&quot;>' + esc(initialOf(s)) + '</div>\'">'
       : '<div class="cover cover-fallback">' + esc(initialOf(s)) + '</div>';
     const pv = isVirtual(s);
-    const prov = providerLabel(s.provider_id || (pv ? 'lxv' : ''));
+    const sname = sourceName(s.source_id);
     return '<div class="row ' + (sel ? 'selected' : '') + '" data-id="' + esc(s.id) + '">'
       + '<div class="col-chk"><div class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>'
       + '<div class="col-num">' + idx + '</div>'
@@ -1107,7 +1117,7 @@ function render(){
       + '<div class="col-artist">' + renderArtistLinks(s) + '</div>'
       + '<div class="col-album">' + renderAlbumLinks(s) + '</div>'
       + '<div class="col-dur">' + fmtDuration(s.dur) + '</div>'
-      + '<div class="col-prov ' + (pv ? 'virtual' : '') + '">' + esc(prov || '—') + '</div>'
+      + '<div class="col-prov ' + (pv ? 'virtual' : '') + '" title="' + esc(sname) + '">' + esc(sname || '—') + '</div>'
       + '</div>';
   }).join('');
   renderPager(pages, total);
@@ -1219,12 +1229,17 @@ function renderSidebar(){
 
 function buildFilterOptions(){
   const src = state.view === 'playlist' ? state.playlistTracks.concat(state.songs) : state.songs;
-  const provs = Array.from(new Set(src.map(s => s.provider_id).filter(Boolean))).sort();
   const fmts = Array.from(new Set(src.map(s => (s.fmt || '').toUpperCase()).filter(Boolean))).sort();
-  const c1 = $('#f-provider').value, c2 = $('#f-format').value;
-  $('#f-provider').innerHTML = '<option value="">全部音源</option>' + provs.map(p => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+  const c2 = $('#f-format').value;
   $('#f-format').innerHTML = '<option value="">全部格式</option>' + fmts.map(f => '<option value="' + esc(f) + '">' + esc(f) + '</option>').join('');
-  $('#f-provider').value = c1; $('#f-format').value = c2;
+  $('#f-format').value = c2;
+
+  // 音源筛选下拉
+  const sSel = $('#f-source');
+  const curSrc = sSel.value || state.filterSource;
+  sSel.innerHTML = '<option value="">全部音源</option>'
+    + state.sources.map(x => '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>').join('');
+  sSel.value = curSrc || '';
 }
 
 function applyFilter(){
@@ -1275,7 +1290,8 @@ function saveUIState(){
       mainView: state.mainView, view: state.view === 'artist' ? 'all' : state.view,
       activePlaylistId: state.activePlaylistId,
       filterArtist: state.view === 'artist' ? state.filterArtist : null,
-      filterAlbum: state.filterAlbum, page: state.page, pageSize: state.pageSize
+      filterAlbum: state.filterAlbum, filterSource: state.filterSource,
+      page: state.page, pageSize: state.pageSize
     }));
   } catch(e){}
 }
@@ -1287,6 +1303,7 @@ function loadUIState(){
 
 async function loadSongs(){ const d = await api('/api/songs'); state.songs = d.songs || d.items || []; }
 async function loadPlaylists(){ const d = await api('/api/playlists'); state.playlists = d.playlists || []; }
+async function loadSources(){ const d = await api('/api/sources'); state.sources = d.sources || []; }
 
 async function loadPlaylistTracks(plId){
   try {
@@ -1307,7 +1324,7 @@ async function loadPlaylistTracks(plId){
       }
       const full = byId.get(obj.id);
       if (full){
-        ['cover_path','cover_art','provider_id','fmt','path','album','artist','dur'].forEach(k => {
+        ['cover_path','cover_art','provider_id','fmt','path','album','artist','dur','source_id'].forEach(k => {
           if (!obj[k] && full[k]) obj[k] = full[k];
         });
       }
@@ -1498,24 +1515,12 @@ async function loadTasks(){
 
 let scanCurPath = '/';
 
-function fillScanProviderOptions() {
-  const sel = $('#scan-provider');
+function fillScanSourceOptions(){
+  const sel = $('#scan-source');
   if (!sel) return;
-  let providers = [];
-  try {
-    const st = window.__settings || {};
-    const raw = st.storage_providers;
-    providers = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
-  } catch(e) { providers = []; }
-  if (!providers.length) {
-    sel.innerHTML = '<option value="alist-1">alist-1（默认）</option>';
-    return;
-  }
   const prev = sel.value;
-  sel.innerHTML = providers
-    .filter(p => p.type === 'alist')
-    .map(p => '<option value="' + esc(p.id) + '">' + esc(p.name || p.id) + '</option>')
-    .join('');
+  sel.innerHTML = '<option value="">— 选择音源 —</option>'
+    + state.sources.map(x => '<option value="' + esc(x.id) + '">' + esc(x.name) + ' (' + esc(x.provider_id) + ')</option>').join('');
   if (prev) sel.value = prev;
 }
 
@@ -1523,10 +1528,16 @@ async function scanLoadDir(path) {
   scanCurPath = path;
   document.getElementById('scan-cur-path').textContent = path || '/';
   const tree = document.getElementById('scan-tree');
+  const srcID = $('#scan-source').value;
+  if (!srcID) {
+    tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">请先选择音源</div>';
+    return;
+  }
+  const src = state.sources.find(x => x.id === srcID);
+  if (!src) return;
   tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">加载中…</div>';
   try {
-    const pid = ($('#scan-provider') && $('#scan-provider').value) || 'alist-1';
-    const d = await api('/api/alist/list?path=' + encodeURIComponent(path) + '&provider_id=' + encodeURIComponent(pid));
+    const d = await api('/api/alist/list?path=' + encodeURIComponent(path) + '&provider_id=' + encodeURIComponent(src.provider_id));
     const dirs = d.dirs || [];
     if (!dirs.length) { tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">（没有子目录）</div>'; return; }
     tree.innerHTML = dirs.map(function(dir){
@@ -1610,6 +1621,8 @@ async function importOnlineSelected(){
   } catch(e){ toast('导入失败：' + e.message, 'err'); }
   finally { $('#online-import').disabled = false; }
 }
+
+// ---------- 存储源表单 ----------
 
 function renderStorageForm(state){
   const providers = state.providers, defaultId = state.defaultId, statuses = state.statuses;
@@ -1783,6 +1796,118 @@ async function saveStorageSettings(){
   } catch (e){ toast('保存失败：' + e.message, 'err'); }
 }
 
+// ---------- 音源管理 ----------
+
+function renderSourcesForm(){
+  if (!state.sources.length){
+    return '<div class="sources-section">'
+      + '<div style="display:flex;align-items:center;margin-bottom:14px">'
+      + '<div style="font-weight:600;font-size:14px">音源管理</div>'
+      + '<div style="flex:1"></div>'
+      + '<button class="btn-primary" id="btn-add-source">+ 新增音源</button>'
+      + '</div>'
+      + '<div class="card" style="text-align:center;color:var(--text-3)">还没有音源，点上方新增</div>'
+      + '</div>';
+  }
+  const rows = state.sources.map(s => {
+    return '<div class="card" style="margin-bottom:10px;display:flex;align-items:center;gap:12px">'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-weight:500">' + esc(s.name) + '</div>'
+      +   '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' + esc(s.provider_id) + ' · ' + esc(s.path) + '</div>'
+      + '</div>'
+      + '<button class="btn-ghost btn-src-scan" data-id="' + esc(s.id) + '">扫描</button>'
+      + '<button class="btn-ghost btn-src-edit" data-id="' + esc(s.id) + '">编辑</button>'
+      + '<button class="btn-ghost btn-src-del" data-id="' + esc(s.id) + '">删除</button>'
+      + '</div>';
+  }).join('');
+  return '<div class="sources-section">'
+    + '<div style="display:flex;align-items:center;margin-bottom:14px">'
+    + '<div style="font-weight:600;font-size:14px">音源管理</div>'
+    + '<div style="flex:1"></div>'
+    + '<button class="btn-primary" id="btn-add-source">+ 新增音源</button>'
+    + '</div>'
+    + rows
+    + '</div>';
+}
+
+function refreshSourcesForm(){
+  const box = $('#settings-body');
+  if (!box) return;
+  const oldSection = box.querySelector('.sources-section');
+  if (!oldSection) return;
+  const scrollTop = window.scrollY;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = renderSourcesForm();
+  const newSection = wrapper.firstElementChild;
+  if (newSection) oldSection.replaceWith(newSection);
+  bindSourcesForm();
+  window.scrollTo(0, scrollTop);
+}
+
+function openSourceModal(src){
+  const m = $('#source-modal');
+  $('#src-modal-title').textContent = src ? '编辑音源' : '新建音源';
+  $('#src-id').value = src ? src.id : '';
+  $('#src-name').value = src ? src.name : '';
+  $('#src-path').value = src ? src.path : '';
+  // 填充 provider 下拉
+  let providers = [];
+  try {
+    const raw = (window.__settings || {}).storage_providers;
+    providers = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+  } catch(e){ providers = []; }
+  const sel = $('#src-provider');
+  sel.innerHTML = providers
+    .filter(p => p.type === 'alist')
+    .map(p => '<option value="' + esc(p.id) + '"' + (src && src.provider_id === p.id ? ' selected' : '') + '>' + esc(p.name || p.id) + '</option>')
+    .join('');
+  m.classList.add('show');
+}
+
+function bindSourcesForm(){
+  const box = $('#settings-body');
+  const addBtn = $('#btn-add-source');
+  if (addBtn) addBtn.addEventListener('click', () => openSourceModal(null));
+  box.querySelectorAll('.btn-src-edit').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const src = state.sources.find(x => x.id === btn.dataset.id);
+      if (src) openSourceModal(src);
+    });
+  });
+  box.querySelectorAll('.btn-src-del').forEach(function(btn){
+    btn.addEventListener('click', async function(){
+      const src = state.sources.find(x => x.id === btn.dataset.id);
+      if (!src) return;
+      if (!confirm('删除音源「' + src.name + '」？该音源下的歌曲也会被删除。')) return;
+      try {
+        await api('/api/sources/' + encodeURIComponent(src.id), { method: 'DELETE' });
+        toast('已删除', 'ok');
+        await loadSources();
+        refreshSourcesForm();
+        buildFilterOptions();
+        applyFilter();
+      } catch(e){ toast('删除失败：' + e.message, 'err'); }
+    });
+  });
+  box.querySelectorAll('.btn-src-scan').forEach(function(btn){
+    btn.addEventListener('click', async function(){
+      const src = state.sources.find(x => x.id === btn.dataset.id);
+      if (!src) return;
+      if (!confirm('扫描音源「' + src.name + '」？')) return;
+      try {
+        await api('/api/scan', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ source_id: src.id, mode: 'full' })
+        });
+        toast('扫描任务已创建', 'ok');
+        startScanPolling();
+      } catch(e){ toast('失败：' + e.message, 'err'); }
+    });
+  });
+}
+
+// ---------- 设置页 ----------
+
 async function loadSettings(){
   const box = $('#settings-body');
   try {
@@ -1800,12 +1925,16 @@ async function loadSettings(){
     } catch(e){ statuses = {}; }
     window.__providerState = { providers: JSON.parse(JSON.stringify(providers)), defaultId: defaultId, statuses: statuses };
     window.__settings = st;
+
+    await loadSources();
     let users = [];
     try {
       const u = await api('/api/subsonic/users');
       users = u.users || u.items || [];
     } catch(_){}
+
     box.innerHTML = ''
+      + renderSourcesForm()
       + renderStorageForm(window.__providerState)
       + renderSubsonicPanel(users)
       + renderFormSection('NCM 音源', [
@@ -1827,6 +1956,8 @@ async function loadSettings(){
           { key: 'subsonic_user', label: '默认 Subsonic 用户名', value: st.subsonic_user, placeholder: 'fire' },
           { key: 'subsonic_pass', label: '默认 Subsonic 密码（留空=不改）', value: '', type: 'password', placeholder: '••••••' }
         ], 'cache');
+
+    bindSourcesForm();
     bindStorageForm();
     bindSubsonicPanel();
     bindSectionSaves();
@@ -2385,6 +2516,7 @@ function startScanPolling() {
         stopScanPolling();
         await loadSongs();
         await loadPlaylists();
+        await loadSources();
         renderSidebar();
         buildFilterOptions();
         applyFilter();
@@ -2628,14 +2760,13 @@ document.addEventListener('click', function(e){
   toast('请在列表中勾选歌曲，再点底部的"加入歌单"', 'ok');
 });
 
-$('#f-provider').addEventListener('change', function(){ state.page = 1; applyFilter(); });
-$('#f-format').addEventListener('change', function(){ state.page = 1; applyFilter(); });
+if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.filterSource = this.value; state.page = 1; applyFilter(); });
+if ($('#f-format')) $('#f-format').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 if ($('#page-size')) $('#page-size').addEventListener('change', function(){
   state.pageSize = parseInt(this.value, 10) || 50;
   state.page = 1;
   render();
 });
-if ($('#f-source')) $('#f-source').addEventListener('change', function(){ state.page = 1; applyFilter(); });
 $('#search').addEventListener('input', debounce(function(){ state.page = 1; applyFilter(); }, 150));
 
 $('#btn-online-search').addEventListener('click', openOnlineModal);
@@ -2657,9 +2788,8 @@ $('#online-body').addEventListener('click', e => {
 });
 
 $('#btn-new-scan').addEventListener('click', function(){
-  fillScanProviderOptions();
+  fillScanSourceOptions();
   $('#scan-modal').classList.add('show');
-  scanLoadDir(scanCurPath || '/');
 });
 $('#scan-up').addEventListener('click', function(){
   if (scanCurPath === '/' || !scanCurPath) return;
@@ -2667,17 +2797,22 @@ $('#scan-up').addEventListener('click', function(){
   parts.pop();
   scanLoadDir('/' + parts.join('/'));
 });
-$('#scan-provider').addEventListener('change', function(){
-  scanCurPath = '/';
-  scanLoadDir('/');
+$('#scan-source').addEventListener('change', function(){
+  const srcID = this.value;
+  if (!srcID) return;
+  const src = state.sources.find(x => x.id === srcID);
+  if (src) {
+    scanCurPath = src.path || '/';
+    scanLoadDir(scanCurPath);
+  }
 });
 $('#scan-submit').addEventListener('click', async function(){
-  if (!scanCurPath || scanCurPath === '/') { toast('请进入具体的音乐目录再选择', 'err'); return; }
-  const providerId = ($('#scan-provider') && $('#scan-provider').value) || 'alist-1';
+  const srcID = $('#scan-source').value;
+  if (!srcID) { toast('请先选择音源', 'err'); return; }
   try {
     await api('/api/scan', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ path: scanCurPath, mode: 'full', source: providerId })
+      body: JSON.stringify({ source_id: srcID, mode: 'full' })
     });
     toast('扫描任务已创建，正在后台执行…', 'ok');
     $('#scan-modal').classList.remove('show');
@@ -2690,12 +2825,44 @@ $('#scan-modal').addEventListener('click', e => { if (e.target.id === 'scan-moda
 $('#btn-refresh-tasks').addEventListener('click', loadTasks);
 $('#btn-refresh-settings').addEventListener('click', loadSettings);
 
+// 音源弹窗事件
+$('#src-cancel').addEventListener('click', () => $('#source-modal').classList.remove('show'));
+$('#source-modal').addEventListener('click', e => { if (e.target.id === 'source-modal') e.target.classList.remove('show'); });
+$('#src-submit').addEventListener('click', async function(){
+  const id = $('#src-id').value;
+  const name = $('#src-name').value.trim();
+  const provider = $('#src-provider').value;
+  const path = $('#src-path').value.trim();
+  if (!name || !provider || !path){ toast('名称、provider、路径必填', 'err'); return; }
+  try {
+    if (id){
+      await api('/api/sources/' + encodeURIComponent(id), {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name: name, provider_id: provider, path: path })
+      });
+      toast('音源已更新', 'ok');
+    } else {
+      await api('/api/sources', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name: name, provider_id: provider, path: path })
+      });
+      toast('音源已创建', 'ok');
+    }
+    $('#source-modal').classList.remove('show');
+    await loadSources();
+    refreshSourcesForm();
+    buildFilterOptions();
+    applyFilter();
+  } catch(e){ toast('保存失败：' + e.message, 'err'); }
+});
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape'){
     if ($('#np-page').classList.contains('show')) { closeNP(); return; }
     if ($('#queue-panel').classList.contains('show')) { toggleQueue(false); return; }
     if (state.selected.size){ state.selected.clear(); render(); }
     $('#scan-modal').classList.remove('show');
+    $('#source-modal').classList.remove('show');
     $('#pl-modal').classList.remove('show');
     $('#online-modal').classList.remove('show');
   }
@@ -2754,11 +2921,12 @@ async function boot(){
       const sess = await fetch('/api/web-auth/session', {credentials:'same-origin'});
       if (sess.status === 401){ showLoginModal(); return; }
     } catch(e){}
-    await Promise.all([loadSongs(), loadPlaylists()]);
+    await Promise.all([loadSongs(), loadPlaylists(), loadSources()]);
     const saved = loadUIState();
     if (saved){
       if (saved.pageSize) state.pageSize = saved.pageSize;
       if (saved.filterAlbum) state.filterAlbum = saved.filterAlbum;
+      if (saved.filterSource) state.filterSource = saved.filterSource;
       if (saved.view === 'playlist' && saved.activePlaylistId &&
           state.playlists.find(p => p.id === saved.activePlaylistId)){
         state.activePlaylistId = saved.activePlaylistId;
@@ -2772,6 +2940,7 @@ async function boot(){
     }
     renderSidebar();
     buildFilterOptions();
+    if (state.filterSource && $('#f-source')) $('#f-source').value = state.filterSource;
     if (saved && saved.page) state.page = saved.page;
     applyFilter();
     if (saved && saved.mainView && saved.mainView !== 'songs') switchMainView(saved.mainView);
