@@ -117,7 +117,7 @@ func Migrate(db *sql.DB) error {
 			path TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
 		)`,
-		// 新增：音源路径表（一个音源可挂多条路径）
+		// 音源路径表（一个音源可挂多条路径）
 		`CREATE TABLE IF NOT EXISTS source_paths (
 			id TEXT PRIMARY KEY,
 			source_id TEXT NOT NULL,
@@ -125,6 +125,12 @@ func Migrate(db *sql.DB) error {
 			path TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+		)`,
+		// 新增：用户-音源授权表
+		`CREATE TABLE IF NOT EXISTS user_sources (
+			username  TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			PRIMARY KEY (username, source_id)
 		)`,
 	}
 	for _, s := range schema {
