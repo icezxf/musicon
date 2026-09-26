@@ -1649,25 +1649,28 @@ function renderStorageForm(state){
       + '</div>'
       + '</div>';
   }).join('');
-  return '<div style="display:flex;align-items:center;margin-bottom:14px">'
+  return '<div class="storage-section">'
+    + '<div style="display:flex;align-items:center;margin-bottom:14px">'
     + '<div style="font-weight:600;font-size:14px">存储源</div>'
     + '<div style="flex:1"></div>'
     + '<button class="btn-ghost" id="btn-add-provider">+ 新增</button>'
     + '<button class="btn-primary" id="btn-save-storage" style="margin-left:8px">保存</button>'
     + '</div>'
-    + (cards || '<div class="card" style="text-align:center;color:var(--text-3)">暂无存储源，点上方新增</div>');
+    + (cards || '<div class="card" style="text-align:center;color:var(--text-3)">暂无存储源，点上方新增</div>')
+    + '</div>';
 }
 
 function refreshStorageForm() {
   const box = $('#settings-body');
-  const old = box.querySelector('.provider-card');
-  if (!old) return;
+  if (!box) return;
+  const oldSection = box.querySelector('.storage-section');
+  if (!oldSection) return;
   const scrollTop = window.scrollY;
   const wrapper = document.createElement('div');
   wrapper.innerHTML = renderStorageForm(window.__providerState);
-  const oldSection = old.closest('.card')?.parentElement || old.parentElement;
-  if (oldSection && wrapper.firstElementChild) {
-    oldSection.replaceWith(wrapper.firstElementChild);
+  const newSection = wrapper.firstElementChild;
+  if (newSection) {
+    oldSection.replaceWith(newSection);
   }
   bindStorageForm();
   window.scrollTo(0, scrollTop);
