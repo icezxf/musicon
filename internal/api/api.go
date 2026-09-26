@@ -66,6 +66,60 @@ func (h *Handler) authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// 当前请求的用户名和角色
+func (h *Handler) currentUser(r *http.Request) (string, string) {
+	user, ok := auth.CheckWebSession(h.DB.DB, r)
+	if !ok {
+		return "", ""
+	}
+	role := h.DB.GetUserRole(user)
+	if role == "" {
+		role = "user"
+	}
+	return user, role
+}
+
+// 判断路径是否需要管理员
+func isAdminOnly(p, method string) bool {
+	// 设置、扫描、任务、用户管理
+	if p == "/api/settings" {
+		return true
+	}
+	if p == "/api/settings/storage/test" {
+		return true
+	}
+	if p == "/api/scan" {
+		return true
+	}
+	if p == "/api/tasks" {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/subsonic/users") {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/users") {
+		return true
+	}
+	if p == "/api/music/import" {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/artist/refresh") {
+		return true
+	}
+	// 音源管理写操作
+	if strings.HasPrefix(p, "/api/sources") && method != "GET" {
+		return true
+	}
+	// 歌曲管理
+	if p == "/api/songs" && method == "DELETE" {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/songs/") && method == "PUT" {
+		return true
+	}
+	return false
+}
+
 // ---------- 公开接口 ----------
 
 func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +128,18 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "missing id"})
 		return
 	}
+	user, _ := h.currentUser(r)
+	if user == "" {
+		writeJSON(w, 401, map[string]any{"detail": "Unauthorized"})
+		return
+	}
 	s, err := h.DB.GetSong(id)
 	if err != nil {
 		writeJSON(w, 404, map[string]any{"detail": "Song not found"})
+		return
+	}
+	if !h.DB.UserCanSeeSong(user, s.ID) {
+		writeJSON(w, 403, map[string]any{"detail": "无权访问"})
 		return
 	}
 
@@ -138,17 +201,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 
-	dbUser := h.Settings.Get("web_user")
-	dbPass := h.Settings.Get("web_pass")
-	if dbUser == "" {
-		dbUser = h.Cfg.WebUser
-	}
-	if dbPass == "" {
-		dbPass = h.Cfg.WebPass
-	}
-
-	if body.Username != dbUser || body.Password != dbPass {
-		writeJSON(w, 401, map[string]any{"detail": "Invalid credentials"})
+	// 从 subsonic_users 表验证
+	pw, role, enabled, ok := h.DB.GetUserPassword(body.Username)
+	if !ok || !enabled || pw != body.Password {
+		writeJSON(w, 401, map[string]any{"detail": "用户名或密码错误"})
 		return
 	}
 	token, err := auth.CreateWebSession(h.DB.DB, body.Username)
@@ -161,7 +217,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		MaxAge: 30 * 24 * 3600, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: r.TLS != nil,
 	})
-	writeJSON(w, 200, map[string]any{"ok": true, "username": body.Username})
+	writeJSON(w, 200, map[string]any{"ok": true, "username": body.Username, "role": role})
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +234,11 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 401, map[string]any{"detail": "Unauthorized"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"username": user})
+	role := h.DB.GetUserRole(user)
+	if role == "" {
+		role = "user"
+	}
+	writeJSON(w, 200, map[string]any{"username": user, "role": role})
 }
 
 // ---------- 路由分发 ----------
@@ -189,7 +249,27 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 		p = "/"
 	}
 
+	// 权限检查
+	if isAdminOnly(p, r.Method) {
+		user, _ := h.currentUser(r)
+		if h.DB.GetUserRole(user) != "admin" {
+			writeJSON(w, 403, map[string]any{"detail": "需要管理员权限"})
+			return
+		}
+	}
+
 	switch {
+	// ---------- 用户管理（admin） ----------
+	case p == "/api/users" && r.Method == "GET":
+		h.listUsers(w, r)
+	case p == "/api/users" && r.Method == "POST":
+		h.createUser(w, r)
+	case strings.HasPrefix(p, "/api/users/") && r.Method == "PATCH":
+		h.updateUser(w, r)
+	case strings.HasPrefix(p, "/api/users/") && r.Method == "DELETE":
+		h.deleteUser(w, r)
+
+	// ---------- 歌曲 ----------
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
 	case p == "/api/songs/top" && r.Method == "GET":
@@ -203,6 +283,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/songs/") && r.Method == "PUT":
 		h.updateSong(w, r)
 
+	// ---------- 歌单 ----------
 	case p == "/api/playlists" && r.Method == "GET":
 		h.listPlaylists(w, r)
 	case p == "/api/playlists" && r.Method == "POST":
@@ -214,23 +295,27 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/playlists/") && r.Method == "DELETE":
 		h.deletePlaylist(w, r)
 
+	// ---------- Subsonic 用户（旧接口保留，前端可能还在用） ----------
 	case p == "/api/subsonic/users" && r.Method == "GET":
-		h.listSubUsers(w, r)
+		h.listUsers(w, r)
 	case p == "/api/subsonic/users" && r.Method == "POST":
-		h.createSubUser(w, r)
+		h.createUser(w, r)
 	case strings.HasPrefix(p, "/api/subsonic/users/") && r.Method == "PATCH":
-		h.updateSubUser(w, r)
+		h.updateUser(w, r)
 	case strings.HasPrefix(p, "/api/subsonic/users/") && r.Method == "DELETE":
-		h.deleteSubUser(w, r)
+		h.deleteUser(w, r)
 
+	// ---------- 艺术家 ----------
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
 	case p == "/api/artist/refresh" && r.Method == "POST":
 		h.artistRefresh(w, r)
 
+	// ---------- AList ----------
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
+	// ---------- 音源管理 ----------
 	case p == "/api/sources" && r.Method == "GET":
 		h.listSources(w, r)
 	case p == "/api/sources" && r.Method == "POST":
@@ -240,6 +325,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/sources/") && r.Method == "DELETE":
 		h.deleteSource(w, r)
 
+	// ---------- LX ----------
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
@@ -249,11 +335,13 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/music/import" && r.Method == "POST":
 		h.musicImport(w, r)
 
+	// ---------- 任务 ----------
 	case p == "/api/tasks" && r.Method == "GET":
 		h.listTasks(w, r)
 	case p == "/api/scan" && r.Method == "POST":
 		h.startScan(w, r)
 
+	// ---------- 设置 ----------
 	case p == "/api/settings" && r.Method == "GET":
 		h.getSettings(w, r)
 	case p == "/api/settings" && r.Method == "POST":
@@ -261,11 +349,11 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/settings/storage/test" && r.Method == "POST":
 		h.testStorage(w, r)
 
+	// ---------- 统计 ----------
 	case p == "/api/stats" && r.Method == "GET":
 		h.stats(w, r)
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
-
 	case p == "/api/lx/status" && r.Method == "GET":
 		h.lxStatus(w, r)
 
@@ -274,22 +362,135 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---------- 用户管理 ----------
+
+func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := h.DB.ListUsersWithSources()
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"users": users})
+}
+
+func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string   `json:"username"`
+		Password string   `json:"password"`
+		Role     string   `json:"role"`
+		Sources  []string `json:"sources"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Username == "" || body.Password == "" {
+		writeJSON(w, 400, map[string]any{"detail": "用户名和密码必填"})
+		return
+	}
+	if body.Role == "" {
+		body.Role = "user"
+	}
+	if body.Role != "admin" && body.Role != "user" {
+		body.Role = "user"
+	}
+	_, err := h.DB.DB.Exec(`INSERT INTO subsonic_users(username, password, role, enabled) VALUES(?,?,?,1)`,
+		body.Username, body.Password, body.Role)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	if len(body.Sources) > 0 {
+		h.DB.SetUserSources(body.Username, body.Sources)
+	}
+	writeJSON(w, 200, map[string]any{"message": "用户已创建", "username": body.Username})
+}
+
+func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
+	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/users/"))
+	if u == "" {
+		u = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
+	}
+	var body struct {
+		Password string   `json:"password"`
+		Role     string   `json:"role"`
+		Enabled  *bool    `json:"enabled"`
+		Sources  []string `json:"sources"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Password != "" {
+		h.DB.DB.Exec(`UPDATE subsonic_users SET password=? WHERE username=?`, body.Password, u)
+	}
+	if body.Role != "" && (body.Role == "admin" || body.Role == "user") {
+		h.DB.DB.Exec(`UPDATE subsonic_users SET role=? WHERE username=?`, body.Role, u)
+	}
+	if body.Enabled != nil {
+		en := 0
+		if *body.Enabled {
+			en = 1
+		}
+		h.DB.DB.Exec(`UPDATE subsonic_users SET enabled=? WHERE username=?`, en, u)
+	}
+	if body.Sources != nil {
+		h.DB.SetUserSources(u, body.Sources)
+	}
+	writeJSON(w, 200, map[string]any{"message": "已更新"})
+}
+
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/users/"))
+	if u == "" {
+		u = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
+	}
+	if u == "" {
+		writeJSON(w, 400, map[string]any{"detail": "缺少用户名"})
+		return
+	}
+	// 不能删自己
+	me, _ := h.currentUser(r)
+	if me == u {
+		writeJSON(w, 400, map[string]any{"detail": "不能删除自己"})
+		return
+	}
+	h.DB.DB.Exec(`DELETE FROM subsonic_users WHERE username=?`, u)
+	h.DB.SetUserSources(u, []string{})
+	writeJSON(w, 200, map[string]any{"message": "已删除"})
+}
+
 // ---------- 歌曲 ----------
 
 func (h *Handler) listSongs(w http.ResponseWriter, r *http.Request) {
+	user, role := h.currentUser(r)
 	songs, err := h.DB.ListSongs()
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
+	}
+	// admin 看全部，user 按授权音源过滤（在线歌 source_id 为空，所有人可见）
+	if role != "admin" {
+		allowed := h.DB.GetUserSources(user)
+		set := map[string]bool{}
+		for _, id := range allowed {
+			set[id] = true
+		}
+		filtered := make([]db.Song, 0, len(songs))
+		for _, s := range songs {
+			if s.SourceID == "" || set[s.SourceID] {
+				filtered = append(filtered, s)
+			}
+		}
+		songs = filtered
 	}
 	writeJSON(w, 200, map[string]any{"songs": songs})
 }
 
 func (h *Handler) getSong(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/songs/")
+	user, _ := h.currentUser(r)
 	s, err := h.DB.GetSong(id)
 	if err != nil {
 		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
+		return
+	}
+	if !h.DB.UserCanSeeSong(user, s.ID) {
+		writeJSON(w, 403, map[string]any{"detail": "无权访问"})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"song": s})
@@ -300,6 +501,11 @@ func (h *Handler) songLyric(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSuffix(rest, "/lyric")
 	if id == "" {
 		writeJSON(w, 400, map[string]any{"detail": "missing id"})
+		return
+	}
+	user, _ := h.currentUser(r)
+	if !h.DB.UserCanSeeSong(user, id) {
+		writeJSON(w, 403, map[string]any{"detail": "无权访问"})
 		return
 	}
 	s, err := h.DB.GetSong(id)
@@ -352,7 +558,18 @@ func (h *Handler) deleteSongs(w http.ResponseWriter, r *http.Request) {
 // ---------- 歌单 ----------
 
 func (h *Handler) listPlaylists(w http.ResponseWriter, r *http.Request) {
+	user, role := h.currentUser(r)
 	pls, _ := h.DB.ListPlaylists()
+	// admin 看全部，user 看自己的 + 公开的
+	if role != "admin" {
+		filtered := make([]db.Playlist, 0, len(pls))
+		for _, p := range pls {
+			if p.Owner == user || p.Public {
+				filtered = append(filtered, p)
+			}
+		}
+		pls = filtered
+	}
 	writeJSON(w, 200, map[string]any{"playlists": pls})
 }
 
@@ -368,7 +585,8 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"message": "歌单名不能为空"})
 		return
 	}
-	id, err := h.DB.CreatePlaylist(body.Name, body.Comment, "admin", body.Public)
+	user, _ := h.currentUser(r)
+	id, err := h.DB.CreatePlaylist(body.Name, body.Comment, user, body.Public)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -386,6 +604,11 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"detail": "Not Found"})
 		return
 	}
+	user, role := h.currentUser(r)
+	if role != "admin" && p.Owner != user && !p.Public {
+		writeJSON(w, 403, map[string]any{"detail": "无权访问"})
+		return
+	}
 	songs, _ := h.DB.GetPlaylistSongs(id)
 	writeJSON(w, 200, map[string]any{
 		"playlist": map[string]any{
@@ -398,6 +621,17 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) patchPlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
+	// 检查归属
+	p, err := h.DB.GetPlaylist(id)
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"detail": "歌单不存在"})
+		return
+	}
+	user, role := h.currentUser(r)
+	if role != "admin" && p.Owner != user {
+		writeJSON(w, 403, map[string]any{"detail": "只能修改自己的歌单"})
+		return
+	}
 	var body map[string]any
 	json.NewDecoder(r.Body).Decode(&body)
 	if v, ok := body["song_ids_to_add"].([]any); ok {
@@ -417,79 +651,21 @@ func (h *Handler) patchPlaylist(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/playlists/")
+	p, err := h.DB.GetPlaylist(id)
+	if err != nil {
+		writeJSON(w, 404, map[string]any{"detail": "歌单不存在"})
+		return
+	}
+	user, role := h.currentUser(r)
+	if role != "admin" && p.Owner != user {
+		writeJSON(w, 403, map[string]any{"detail": "只能删除自己的歌单"})
+		return
+	}
 	if err := h.DB.DeletePlaylist(id); err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"message": "歌单已删除"})
-}
-
-// ---------- Subsonic 用户 ----------
-
-func (h *Handler) listSubUsers(w http.ResponseWriter, r *http.Request) {
-	rows, _ := h.DB.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
-	defer rows.Close()
-	users := []map[string]any{}
-	for rows.Next() {
-		var u, role, created string
-		var en int
-		rows.Scan(&u, &role, &en, &created)
-		users = append(users, map[string]any{"username": u, "role": role, "enabled": en == 1, "created_at": created})
-	}
-	writeJSON(w, 200, map[string]any{"users": users})
-}
-
-func (h *Handler) createSubUser(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-	if body.Username == "" || body.Password == "" {
-		writeJSON(w, 400, map[string]any{"detail": "用户名和密码必填"})
-		return
-	}
-	if body.Role == "" {
-		body.Role = "user"
-	}
-	_, err := h.DB.DB.Exec(`INSERT INTO subsonic_users(username, password, role, enabled) VALUES(?,?,?,1)`,
-		body.Username, body.Password, body.Role)
-	if err != nil {
-		writeJSON(w, 500, map[string]any{"detail": err.Error()})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"message": "账号已创建", "username": body.Username})
-}
-
-func (h *Handler) updateSubUser(w http.ResponseWriter, r *http.Request) {
-	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
-	var body struct {
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Enabled  *bool  `json:"enabled"`
-	}
-	json.NewDecoder(r.Body).Decode(&body)
-	if body.Password != "" {
-		h.DB.DB.Exec(`UPDATE subsonic_users SET password=? WHERE username=?`, body.Password, u)
-	}
-	if body.Role != "" {
-		h.DB.DB.Exec(`UPDATE subsonic_users SET role=? WHERE username=?`, body.Role, u)
-	}
-	if body.Enabled != nil {
-		en := 0
-		if *body.Enabled {
-			en = 1
-		}
-		h.DB.DB.Exec(`UPDATE subsonic_users SET enabled=? WHERE username=?`, en, u)
-	}
-	writeJSON(w, 200, map[string]any{"message": "已更新"})
-}
-
-func (h *Handler) deleteSubUser(w http.ResponseWriter, r *http.Request) {
-	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
-	h.DB.DB.Exec(`DELETE FROM subsonic_users WHERE username=?`, u)
-	writeJSON(w, 200, map[string]any{"message": "已删除"})
 }
 
 // ---------- 艺术家 ----------
@@ -682,7 +858,8 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 // ---------- 音源管理 ----------
 
 func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
-	srcs, err := h.DB.ListSources()
+	user, _ := h.currentUser(r)
+	srcs, err := h.DB.ListSourcesByUser(user)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -1028,7 +1205,6 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 
-	// 走音源扫描：遍历该音源下的所有路径
 	if body.SourceID != "" {
 		src, err := h.DB.GetSource(body.SourceID)
 		if err != nil {
@@ -1050,7 +1226,6 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 兼容旧接口：单路径扫描
 	if body.Path == "" {
 		writeJSON(w, 400, map[string]any{"detail": "path 或 source_id 必填"})
 		return
