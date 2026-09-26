@@ -231,6 +231,15 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
+	case p == "/api/sources" && r.Method == "GET":
+		h.listSources(w, r)
+	case p == "/api/sources" && r.Method == "POST":
+		h.createSource(w, r)
+	case strings.HasPrefix(p, "/api/sources/") && r.Method == "PUT":
+		h.updateSource(w, r)
+	case strings.HasPrefix(p, "/api/sources/") && r.Method == "DELETE":
+		h.deleteSource(w, r)
+
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
@@ -670,6 +679,60 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- 音源管理 ----------
+
+func (h *Handler) listSources(w http.ResponseWriter, r *http.Request) {
+	srcs, err := h.DB.ListSources()
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"sources": srcs})
+}
+
+func (h *Handler) createSource(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name       string `json:"name"`
+		ProviderID string `json:"provider_id"`
+		Path       string `json:"path"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if body.Name == "" || body.ProviderID == "" || body.Path == "" {
+		writeJSON(w, 400, map[string]any{"detail": "name/provider_id/path 必填"})
+		return
+	}
+	id, err := h.DB.CreateSource(body.Name, body.ProviderID, body.Path)
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "message": "音源已创建"})
+}
+
+func (h *Handler) updateSource(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sources/")
+	var body struct {
+		Name       string `json:"name"`
+		ProviderID string `json:"provider_id"`
+		Path       string `json:"path"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	if err := h.DB.UpdateSource(id, body.Name, body.ProviderID, body.Path); err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "音源已更新"})
+}
+
+func (h *Handler) deleteSource(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sources/")
+	if err := h.DB.DeleteSource(id); err != nil {
+		writeJSON(w, 500, map[string]any{"detail": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"message": "音源已删除"})
+}
+
 // ---------- LX 搜索 / 歌词 / 播放地址 / 导入库 ----------
 
 func (h *Handler) metadataSearch(w http.ResponseWriter, r *http.Request) {
@@ -926,9 +989,10 @@ func (h *Handler) listTasks(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Path   string `json:"path"`
-		Mode   string `json:"mode"`
-		Source string `json:"source"`
+		Path     string `json:"path"`
+		Mode     string `json:"mode"`
+		Source   string `json:"source"`
+		SourceID string `json:"source_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	if body.Path == "" {
@@ -938,13 +1002,24 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 	if body.Source == "" {
 		body.Source = "alist-1"
 	}
+	// 如果传了 source_id，用音源定义里的 path 覆盖
+	if body.SourceID != "" {
+		if src, err := h.DB.GetSource(body.SourceID); err == nil {
+			if src.ProviderID != "" {
+				body.Source = src.ProviderID
+			}
+			if src.Path != "" {
+				body.Path = src.Path
+			}
+		}
+	}
 	h.Settings.Set("last_scan_path", body.Path)
 	taskID, err := h.DB.CreateScanTask(body.Path, body.Mode, body.Source)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
 	}
-	go h.Scan.Run(taskID, body.Path, body.Source)
+	go h.Scan.Run(taskID, body.Path, body.Source, body.SourceID)
 	writeJSON(w, 200, map[string]any{"message": "扫描任务已创建", "task_id": taskID})
 }
 
