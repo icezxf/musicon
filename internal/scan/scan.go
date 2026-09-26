@@ -22,14 +22,13 @@ var audioExts = map[string]string{
 	".wma": "WMA", ".asf": "WMA",
 }
 
-// noTagFormats 这些格式不支持标签解析，扫描时直接走文件名 fallback，不读文件内容
 var noTagFormats = map[string]bool{
 	"WMA": true,
 }
 
 type Scanner struct {
 	DB       *db.Holder
-	AList    *alist.Client
+	AList    *alist.Manager
 	CoverDir string
 	WG       *sync.WaitGroup
 }
@@ -45,7 +44,10 @@ func (s *Scanner) Run(taskID, rootPath, providerID string) {
 			s.DB.SetTaskStatus(taskID, "failed")
 		}
 	}()
-	log.Printf("[scan] start %s %s", taskID, rootPath)
+	if providerID == "" {
+		providerID = "alist-1"
+	}
+	log.Printf("[scan] start %s path=%s provider=%s", taskID, rootPath, providerID)
 	total := 0
 	processed := 0
 	s.walk(taskID, rootPath, providerID, &total, &processed)
@@ -54,7 +56,8 @@ func (s *Scanner) Run(taskID, rootPath, providerID string) {
 }
 
 func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
-	entries, err := s.AList.List(dir)
+	client := s.AList.Get(providerID)
+	entries, err := client.List(dir)
 	if err != nil {
 		log.Printf("[scan] list %s: %v", dir, err)
 		return
@@ -71,7 +74,7 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 			continue
 		}
 		*total++
-		if err := s.probeAndSave(full, providerID, fmtName, e.Size); err != nil {
+		if err := s.probeAndSave(client, full, providerID, fmtName, e.Size); err != nil {
 			log.Printf("[scan] probe %s: %v", full, err)
 			continue
 		}
@@ -83,15 +86,14 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 	s.DB.SetTaskProgress(taskID, *total, *processed)
 }
 
-func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize int64) error {
-	rawURL, err := s.AList.GetRawURL(fullPath)
+func (s *Scanner) probeAndSave(client *alist.Client, fullPath, providerID, fmtName string, fileSize int64) error {
+	rawURL, err := client.GetRawURL(fullPath)
 	if err != nil {
 		return err
 	}
-
 	filename := path.Base(fullPath)
 
-	// 这些格式不支持标签解析，直接走文件名 fallback，不读文件内容
+	// 无标签格式：直接文件名入库
 	if noTagFormats[fmtName] {
 		title := strings.TrimSuffix(filename, filepath.Ext(filename))
 		artist := ""
@@ -114,15 +116,11 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 	var data []byte
 	var info *meta.Info
 	sizes := []int64{
-		1 * 1024 * 1024,
-		2 * 1024 * 1024,
-		4 * 1024 * 1024,
-		8 * 1024 * 1024,
-		16 * 1024 * 1024,
+		1 * 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024,
+		8 * 1024 * 1024, 16 * 1024 * 1024,
 	}
-
 	for i, size := range sizes {
-		data, err = s.AList.ReadRange(rawURL, 0, size-1)
+		data, err = client.ReadRange(rawURL, 0, size-1)
 		if err != nil {
 			return err
 		}
@@ -130,33 +128,24 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 		if err != nil || info == nil {
 			info = &meta.Info{Title: filename}
 		}
-
 		hasCover := len(info.CoverData) > 0
 		hasDur := info.Duration > 0
 		hasLyrics := info.Lyrics != ""
-
-		// 1) 元数据全齐了 → 立即停
 		if hasCover && hasDur && hasLyrics {
 			log.Printf("[probe] %s ✓ 封面=%d 时长=%ds 歌词=%d字节 (读 %dMB)",
 				filename, len(info.CoverData), info.Duration, len(info.Lyrics), size/1024/1024)
 			break
 		}
-
-		// 2) 封面+时长齐了，且已读 ≥ 2MB → 接受，放弃歌词
 		if hasCover && hasDur && i >= 1 {
 			log.Printf("[probe] %s ✓ 封面=%d 时长=%ds (读 %dMB, 无歌词)",
 				filename, len(info.CoverData), info.Duration, size/1024/1024)
 			break
 		}
-
-		// 3) 只有封面齐，已读 ≥ 4MB → 接受（有时长更好，没时长也认了）
 		if hasCover && i >= 2 {
 			log.Printf("[probe] %s ✓ 封面=%d (读 %dMB, 无时长无歌词)",
 				filename, len(info.CoverData), size/1024/1024)
 			break
 		}
-
-		// 4) 最后一轮了，没得选
 		if i == len(sizes)-1 {
 			log.Printf("[probe] %s ⚠ 16MB 内未读全 (封面=%v 时长=%v 歌词=%v)",
 				filename, hasCover, hasDur, hasLyrics)
@@ -173,7 +162,6 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 	if aa == "" {
 		aa = artist
 	}
-
 	coverPath := ""
 	if len(info.CoverData) > 0 {
 		coverPath = s.saveCover(info.CoverData, info.CoverMime)
@@ -205,8 +193,6 @@ func (s *Scanner) probeAndSave(fullPath, providerID, fmtName string, fileSize in
 	})
 }
 
-// splitFilename 尝试把 "艺术家 - 标题.wma" 拆成 [艺术家, 标题]
-// 用于 WMA 这种无标签格式的 fallback
 func splitFilename(filename string) []string {
 	name := strings.TrimSuffix(filename, filepath.Ext(filename))
 	for _, sep := range []string{" - ", " -", "- ", "-"} {
@@ -221,7 +207,6 @@ func splitFilename(filename string) []string {
 	return nil
 }
 
-// 按 MIME 决定扩展名
 func (s *Scanner) saveCover(data []byte, mime string) string {
 	if s.CoverDir == "" {
 		return ""
