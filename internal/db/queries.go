@@ -576,3 +576,174 @@ func (h *Holder) DeleteSource(id string) error {
 	}
 	return tx.Commit()
 }
+
+// ============ 用户 / 音源授权 ============
+
+type UserWithSources struct {
+	Username  string   `json:"username"`
+	Role      string   `json:"role"`
+	Enabled   bool     `json:"enabled"`
+	Sources   []string `json:"sources"` // 授权的 source_id 列表
+	CreatedAt string   `json:"created_at"`
+}
+
+// GetUserRole 返回用户的角色（admin/user），用户不存在或禁用返回空串
+func (h *Holder) GetUserRole(username string) string {
+	if username == "" {
+		return ""
+	}
+	var role string
+	err := h.DB.QueryRow(`SELECT role FROM subsonic_users WHERE username=? AND enabled=1`, username).Scan(&role)
+	if err != nil {
+		return ""
+	}
+	return role
+}
+
+// ListUsersWithSources 列出所有用户及其授权音源
+func (h *Holder) ListUsersWithSources() ([]UserWithSources, error) {
+	rows, err := h.DB.Query(`SELECT username, role, enabled, created_at FROM subsonic_users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserWithSources{}
+	for rows.Next() {
+		var u UserWithSources
+		var en int
+		rows.Scan(&u.Username, &u.Role, &en, &u.CreatedAt)
+		u.Enabled = en == 1
+		u.Sources = h.GetUserSources(u.Username)
+		if u.Sources == nil {
+			u.Sources = []string{}
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// GetUserSources 返回用户被授权的音源 ID 列表
+func (h *Holder) GetUserSources(username string) []string {
+	if username == "" {
+		return nil
+	}
+	rows, err := h.DB.Query(`SELECT source_id FROM user_sources WHERE username=?`, username)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var sid string
+		rows.Scan(&sid)
+		out = append(out, sid)
+	}
+	return out
+}
+
+// SetUserSources 重设用户的音源授权（先删后插）
+func (h *Holder) SetUserSources(username string, sourceIDs []string) error {
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM user_sources WHERE username=?`, username); err != nil {
+		return err
+	}
+	for _, sid := range sourceIDs {
+		if sid == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO user_sources(username, source_id) VALUES(?,?)`,
+			username, sid); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UserCanSeeSource 检查用户是否有权限看某个音源。admin 永远返回 true
+func (h *Holder) UserCanSeeSource(username, sourceID string) bool {
+	if sourceID == "" {
+		return false
+	}
+	role := h.GetUserRole(username)
+	if role == "admin" {
+		return true
+	}
+	var n int
+	h.DB.QueryRow(`SELECT COUNT(*) FROM user_sources WHERE username=? AND source_id=?`,
+		username, sourceID).Scan(&n)
+	return n > 0
+}
+
+// ListSourcesByUser 返回用户能看的音源列表
+// admin 返回全部；普通用户返回被授权的
+func (h *Holder) ListSourcesByUser(username string) ([]Source, error) {
+	role := h.GetUserRole(username)
+	if role == "admin" {
+		return h.ListSources()
+	}
+	ids := h.GetUserSources(username)
+	if len(ids) == 0 {
+		return []Source{}, nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := h.DB.Query(
+		`SELECT id, name, provider_id, path, COALESCE(created_at,'') FROM sources WHERE id IN (`+ph+`) ORDER BY created_at DESC`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Source{}
+	for rows.Next() {
+		var s Source
+		if err := rows.Scan(&s.ID, &s.Name, &s.ProviderID, &s.Path, &s.CreatedAt); err != nil {
+			continue
+		}
+		s.Paths, _ = h.loadSourcePaths(s.ID)
+		if s.Paths == nil {
+			s.Paths = []SourcePath{}
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// UserCanSeeSong 检查用户是否有权限看某首歌（按 source_id 授权）
+func (h *Holder) UserCanSeeSong(username, songID string) bool {
+	role := h.GetUserRole(username)
+	if role == "admin" {
+		return true
+	}
+	// 查歌曲的 source_id
+	var sid string
+	err := h.DB.QueryRow(`SELECT source_id FROM songs WHERE id=?`, songID).Scan(&sid)
+	if err != nil {
+		return false
+	}
+	// 在线歌（source_id 为空）所有登录用户都能看
+	if sid == "" {
+		return true
+	}
+	return h.UserCanSeeSource(username, sid)
+}
+
+// GetUserPassword 返回用户的密码和启用状态（web 登录用）
+func (h *Holder) GetUserPassword(username string) (password, role string, enabled bool, ok bool) {
+	var pw, rl string
+	var en int
+	err := h.DB.QueryRow(`SELECT password, role, enabled FROM subsonic_users WHERE username=?`, username).
+		Scan(&pw, &rl, &en)
+	if err != nil {
+		return "", "", false, false
+	}
+	return pw, rl, en == 1, true
+}
