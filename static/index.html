@@ -755,6 +755,10 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
 <div class="modal-bg" id="scan-modal">
   <div class="modal" style="width:min(600px,92vw)">
     <div class="modal-title">新建扫描任务</div>
+    <div class="lbl">AList 音源</div>
+    <select id="scan-provider" class="select" style="width:100%;margin-bottom:12px;height:36px">
+      <option value="alist-1">alist-1</option>
+    </select>
     <div class="lbl">当前路径</div>
     <div id="scan-cur-path" style="font-family:monospace;font-size:13px;padding:10px 12px;background:#0d1016;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;word-break:break-all;color:var(--accent-h)">/</div>
     <div id="scan-tree" style="max-height:320px;overflow-y:auto;background:#0d1016;border:1px solid var(--border);border-radius:6px;padding:6px">
@@ -1465,20 +1469,22 @@ async function loadTasks(){
         + '<div style="font-size:13px;color:var(--text-2);margin-bottom:6px">' + esc(t.path || '(无路径)') + '</div>'
         + '<div style="font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:8px">'
         + '<span>模式: ' + esc(t.mode || '—')
+        + ' · 源: ' + esc(t.source || '—')
         + (t.total != null ? ' · 总计 ' + t.total : '')
         + (t.count != null ? ' · 已入库 ' + t.count : '')
         + '</span>'
         + '<span style="flex:1"></span>'
-        + (t.path ? '<button class="btn-ghost btn-rescan" data-path="' + esc(t.path) + '">重新扫描</button>' : '')
+        + (t.path ? '<button class="btn-ghost btn-rescan" data-path="' + esc(t.path) + '" data-source="' + esc(t.source || 'alist-1') + '">重新扫描</button>' : '')
         + '</div></div>';
     }).join('') + '</div>';
     box.querySelectorAll('.btn-rescan').forEach(function(btn){
       btn.addEventListener('click', async function(){
         const path = this.dataset.path;
+        const source = this.dataset.source || 'alist-1';
         if (!path) return;
         try {
           await api('/api/scan', { method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ path: path, mode: 'full', source: 'alist-1' }) });
+            body: JSON.stringify({ path: path, mode: 'full', source: source }) });
           toast('已重新创建扫描任务，正在后台执行…', 'ok');
           await loadTasks();
           startScanPolling();
@@ -1491,13 +1497,36 @@ async function loadTasks(){
 }
 
 let scanCurPath = '/';
+
+function fillScanProviderOptions() {
+  const sel = $('#scan-provider');
+  if (!sel) return;
+  let providers = [];
+  try {
+    const st = window.__settings || {};
+    const raw = st.storage_providers;
+    providers = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+  } catch(e) { providers = []; }
+  if (!providers.length) {
+    sel.innerHTML = '<option value="alist-1">alist-1（默认）</option>';
+    return;
+  }
+  const prev = sel.value;
+  sel.innerHTML = providers
+    .filter(p => p.type === 'alist')
+    .map(p => '<option value="' + esc(p.id) + '">' + esc(p.name || p.id) + '</option>')
+    .join('');
+  if (prev) sel.value = prev;
+}
+
 async function scanLoadDir(path) {
   scanCurPath = path;
   document.getElementById('scan-cur-path').textContent = path || '/';
   const tree = document.getElementById('scan-tree');
   tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">加载中…</div>';
   try {
-    const d = await api('/api/alist/list?path=' + encodeURIComponent(path));
+    const pid = ($('#scan-provider') && $('#scan-provider').value) || 'alist-1';
+    const d = await api('/api/alist/list?path=' + encodeURIComponent(path) + '&provider_id=' + encodeURIComponent(pid));
     const dirs = d.dirs || [];
     if (!dirs.length) { tree.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-3);font-size:13px">（没有子目录）</div>'; return; }
     tree.innerHTML = dirs.map(function(dir){
@@ -1629,6 +1658,21 @@ function renderStorageForm(state){
     + (cards || '<div class="card" style="text-align:center;color:var(--text-3)">暂无存储源，点上方新增</div>');
 }
 
+function refreshStorageForm() {
+  const box = $('#settings-body');
+  const old = box.querySelector('.provider-card');
+  if (!old) return;
+  const scrollTop = window.scrollY;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = renderStorageForm(window.__providerState);
+  const oldSection = old.closest('.card')?.parentElement || old.parentElement;
+  if (oldSection && wrapper.firstElementChild) {
+    oldSection.replaceWith(wrapper.firstElementChild);
+  }
+  bindStorageForm();
+  window.scrollTo(0, scrollTop);
+}
+
 function collectProviderPayload(){
   const cards = document.querySelectorAll('.provider-card');
   const providers = [];
@@ -1651,19 +1695,24 @@ function bindStorageForm(){
   const saveBtn = $('#btn-save-storage');
   if (saveBtn) saveBtn.addEventListener('click', saveStorageSettings);
   const addBtn = $('#btn-add-provider');
-  if (addBtn) addBtn.addEventListener('click', async function(){
+  if (addBtn) addBtn.addEventListener('click', function(){
     const s = window.__providerState;
     const nid = 'alist-' + (s.providers.length + 1);
-    s.providers.push({ id: nid, type: 'alist', name: 'AList 存储', config: { base_url: '', refresh_username: '', refresh_password: '' } });
-    await loadSettings();
+    s.providers.push({
+      id: nid,
+      type: 'alist',
+      name: 'AList 存储 ' + (s.providers.length + 1),
+      config: { base_url: '', refresh_username: '', refresh_password: '' }
+    });
+    refreshStorageForm();
   });
   box.querySelectorAll('.btn-del').forEach(function(btn){
-    btn.addEventListener('click', async function(){
+    btn.addEventListener('click', function(){
       const s = window.__providerState;
       const idx = +btn.dataset.idx;
       if (!confirm('删除存储源「' + (s.providers[idx].name || s.providers[idx].id) + '」？')) return;
       s.providers.splice(idx, 1);
-      await loadSettings();
+      refreshStorageForm();
     });
   });
   box.querySelectorAll('.btn-test').forEach(function(btn){
@@ -2164,7 +2213,6 @@ function openNP() {
   $('#np-page').classList.add('show');
   updateNPMeta(s);
   renderLyrics();
-  // 进入详情页时自动打开右侧播放队列
   toggleQueue(true);
 }
 
@@ -2347,7 +2395,6 @@ function startScanPolling() {
     }
   }, 2000);
 
-  // 最长轮询 10 分钟，避免卡死
   scanPollTimeout = setTimeout(stopScanPolling, 10 * 60 * 1000);
 }
 
@@ -2383,18 +2430,15 @@ $('#queue-list').addEventListener('click', e => {
   if (isNaN(idx) || idx === player.index) return;
   player.index = idx;
   playCurrent();
-  // 在普通页面点队列里的歌，自动关闭队列回到播放条
   if (!$('#np-page').classList.contains('show')) toggleQueue(false);
 });
 $('#pl-seek').addEventListener('input', e => {
   if (audio.duration) audio.currentTime = audio.duration * e.target.value / 100;
 });
 
-// 点击播放条封面或歌名打开全屏
 $('#pl-cover').addEventListener('click', openNP);
 $('#pl-meta').addEventListener('click', openNP);
 
-// 全屏页事件
 $('#np-close').addEventListener('click', closeNP);
 $('#np-play').addEventListener('click', () => {
   if (!audio.src) return;
@@ -2610,6 +2654,7 @@ $('#online-body').addEventListener('click', e => {
 });
 
 $('#btn-new-scan').addEventListener('click', function(){
+  fillScanProviderOptions();
   $('#scan-modal').classList.add('show');
   scanLoadDir(scanCurPath || '/');
 });
@@ -2619,12 +2664,17 @@ $('#scan-up').addEventListener('click', function(){
   parts.pop();
   scanLoadDir('/' + parts.join('/'));
 });
+$('#scan-provider').addEventListener('change', function(){
+  scanCurPath = '/';
+  scanLoadDir('/');
+});
 $('#scan-submit').addEventListener('click', async function(){
   if (!scanCurPath || scanCurPath === '/') { toast('请进入具体的音乐目录再选择', 'err'); return; }
+  const providerId = ($('#scan-provider') && $('#scan-provider').value) || 'alist-1';
   try {
     await api('/api/scan', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ path: scanCurPath, mode: 'full', source: 'alist-1' })
+      body: JSON.stringify({ path: scanCurPath, mode: 'full', source: providerId })
     });
     toast('扫描任务已创建，正在后台执行…', 'ok');
     $('#scan-modal').classList.remove('show');
