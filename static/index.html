@@ -56,6 +56,14 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   font-size:14px;line-height:1;transition:all .12s;flex-shrink:0;margin-left:4px}
 .nav-item:hover .pl-del{opacity:1}
 .nav-item .pl-del:hover{background:rgba(239,68,68,.15);color:var(--danger)}
+.nav-item .pl-owner{font-size:10px;color:var(--text-3);margin-left:2px}
+.nav-user{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--border);background:var(--bg-1)}
+.nav-user-avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:600;flex-shrink:0}
+.nav-user-info{flex:1;min-width:0}
+.nav-user-name{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-user-role{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.4px}
+.nav-user-role.admin{color:var(--accent-h)}
 .main{display:flex;flex-direction:column;min-width:0;background:var(--bg);position:relative;height:100vh;overflow:hidden}
 .topbar{padding:20px 28px 14px;display:flex;align-items:center;gap:16px;
   border-bottom:1px solid var(--border);flex-shrink:0;
@@ -261,6 +269,29 @@ input,select{font:inherit;color:inherit;background:none;border:0;outline:none}
   background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12.5px}
 .path-row .path-del{padding:6px 10px;color:var(--danger);font-size:12px;border-radius:4px;flex-shrink:0;height:32px}
 .path-row .path-del:hover{background:rgba(239,68,68,.12)}
+
+/* ===== 用户管理 ===== */
+.user-card{background:var(--bg-1);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;margin-bottom:10px}
+.user-card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.user-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:600;flex-shrink:0}
+.user-info{flex:1;min-width:0}
+.user-name{font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px}
+.user-role-badge{font-size:10px;padding:2px 8px;border-radius:10px;letter-spacing:.4px;
+  text-transform:uppercase;font-weight:600}
+.user-role-badge.admin{background:var(--accent-soft);color:var(--accent-h)}
+.user-role-badge.user{background:var(--bg-3);color:var(--text-3)}
+.user-meta{font-size:11.5px;color:var(--text-3);margin-top:2px}
+.user-disabled .user-name{opacity:.5}
+.user-actions{display:flex;gap:6px;flex-shrink:0}
+.src-checkboxes{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.src-checkbox{display:flex;align-items:center;gap:6px;padding:6px 12px;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:20px;
+  font-size:12.5px;cursor:pointer;transition:all .12s;user-select:none}
+.src-checkbox:hover{border-color:var(--border-2)}
+.src-checkbox.checked{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-h)}
+.src-checkbox input{display:none}
 
 #online-modal .modal{width:min(900px,95vw);max-height:90vh;display:flex;flex-direction:column;padding:20px}
 #online-modal .online-header{display:flex;gap:8px;align-items:center;margin-bottom:14px}
@@ -579,11 +610,16 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
         <span class="nav-count" id="count-albums">0</span>
       </div>
     </div>
-    <div class="nav-section">
-      <div class="nav-title">功能</div>
+    <div class="nav-section" id="admin-nav-section">
+      <div class="nav-title">管理</div>
       <div class="nav-item" id="nav-tasks">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span class="nav-label">任务中心</span>
+      </div>
+      <div class="nav-item" id="nav-users">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+        <span class="nav-label">用户管理</span>
+        <span class="nav-count" id="count-users">0</span>
       </div>
       <div class="nav-item" id="nav-settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -604,6 +640,16 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
       </div>
       <div id="pl-list"><div style="padding:12px;color:var(--text-3);font-size:13px">加载中…</div></div>
     </div>
+    <div class="nav-user" id="nav-user" style="display:none">
+      <div class="nav-user-avatar" id="nav-user-avatar">?</div>
+      <div class="nav-user-info">
+        <div class="nav-user-name" id="nav-user-name">—</div>
+        <div class="nav-user-role" id="nav-user-role">—</div>
+      </div>
+      <button class="icon-btn" id="btn-logout" title="退出登录" style="width:28px;height:28px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
   </aside>
 
   <main class="main">
@@ -617,7 +663,7 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
         <input id="search" placeholder="搜索标题、艺术家、专辑…" autocomplete="off">
       </div>
       <div class="topbar-actions">
-        <button class="btn-ghost" id="btn-online-search" title="在线搜索并导入歌曲" style="height:38px">
+        <button class="btn-ghost" id="btn-online-search" title="在线搜索并导入歌曲" style="height:38px;display:none">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>在线
         </button>
         <button class="btn-primary" id="btn-add-songs-to-playlist" style="display:none" title="向当前歌单添加歌曲">+ 添加歌曲</button>
@@ -640,7 +686,7 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
         <button class="btn-ghost" id="btn-all">全选</button>
         <button class="btn-ghost" id="btn-invert">反选</button>
         <button class="btn-ghost" id="btn-clear">清空</button>
-        <button class="btn-ghost danger" id="btn-delete">删除</button>
+        <button class="btn-ghost danger" id="btn-delete" style="display:none">删除</button>
       </div>
     </div>
 
@@ -679,6 +725,16 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
         <button class="btn-ghost" id="btn-refresh-tasks">刷新</button>
       </div>
       <div id="tasks-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div></div></div>
+    </div>
+
+    <div class="list-wrap" id="view-users" style="display:none">
+      <div style="padding:12px 0 16px;max-width:900px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <button class="btn-primary" id="btn-new-user">+ 新增用户</button>
+          <button class="btn-ghost" id="btn-refresh-users">刷新</button>
+        </div>
+        <div id="users-body"><div class="skeleton"><div class="sk-row"></div><div class="sk-row"></div></div></div>
+      </div>
     </div>
 
     <div class="list-wrap" id="view-settings" style="display:none">
@@ -754,6 +810,31 @@ body.queue-open .np-bottom{padding-right:calc(60px + var(--queue-w))}
     <div class="modal-actions">
       <button class="btn-ghost" id="pl-cancel">取消</button>
       <button class="btn-primary" id="pl-submit">创建</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="user-modal">
+  <div class="modal" style="width:min(560px,94vw);max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="user-modal-title">新建用户</div>
+    <input type="hidden" id="user-original">
+    <label><div class="lbl">用户名</div><input id="user-name" class="input" placeholder="例如：wife" maxlength="40"></label>
+    <label><div class="lbl" id="user-password-label">密码</div><input id="user-password" type="password" class="input" placeholder="登录密码"></label>
+    <label><div class="lbl">角色</div>
+      <select id="user-role" class="select">
+        <option value="user">普通用户</option>
+        <option value="admin">管理员</option>
+      </select>
+    </label>
+    <label id="user-enabled-label" style="display:none;display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="user-enabled" checked style="width:16px;height:16px;accent-color:var(--accent)">
+      <span style="font-size:13px;color:var(--text-2)">启用账号</span>
+    </label>
+    <div class="lbl" style="margin-top:14px">可访问的音源（勾选后该用户能看到这些音源的歌曲）</div>
+    <div class="src-checkboxes" id="user-source-list"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="user-cancel">取消</button>
+      <button class="btn-primary" id="user-submit">保存</button>
     </div>
   </div>
 </div>
@@ -926,13 +1007,17 @@ const state = {
   filterArtist: null, filterAlbum: null,
   sources: [], filterSource: '',
   onlineResults: [], onlineSelected: new Set(),
-  editingSourcePaths: [],  // 音源弹窗里正在编辑的路径列表
-  dirPickCallback: null,   // 目录浏览选择后的回调
+  editingSourcePaths: [],
+  users: [],
+  me: { username: '', role: 'user' },
 };
+
+function isAdmin(){ return state.me.role === 'admin'; }
 
 async function api(path, opts){
   const r = await fetch(path, {credentials:'same-origin', ...(opts||{})});
   if (r.status === 401){ showLoginModal(); throw new Error('未登录'); }
+  if (r.status === 403){ throw new Error('无权限'); }
   if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
   return r.json();
 }
@@ -1120,7 +1205,7 @@ function render(){
   const list = all.slice(start, start + size);
   const body = $('#list-body');
   if (!list.length){
-    body.innerHTML = '<div class="empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><div class="empty-title">没有匹配的歌曲</div><div class="empty-sub">换个关键词或调整筛选</div></div>';
+    body.innerHTML = '<div class="empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><div class="empty-title">没有匹配的歌曲</div><div class="empty-sub">' + (isAdmin() ? '换个关键词或调整筛选' : '如果你是新用户，请联系管理员分配音源权限') + '</div></div>';
     removePager(); updateCounters(); return;
   }
   body.innerHTML = list.map(function(s, i){
@@ -1206,7 +1291,8 @@ function updateCounters(){
     const prevVal = sel.value;
     const opts = state.playlists.map(function(p){
       const dis = p.is_readonly ? ' disabled' : '';
-      return '<option value="' + esc(p.id) + '"' + dis + '>' + esc(p.name) + (p.is_readonly ? '（只读）' : '') + '</option>';
+      const ownerTag = (isAdmin() && p.owner && p.owner !== state.me.username) ? '（' + p.owner + '）' : '';
+      return '<option value="' + esc(p.id) + '"' + dis + '>' + esc(p.name) + ownerTag + (p.is_readonly ? '（只读）' : '') + '</option>';
     }).join('');
     sel.innerHTML = '<option value="">选择歌单…</option>' + opts;
     if (state.view === 'playlist' && state.activePlaylistId) sel.value = state.activePlaylistId;
@@ -1214,13 +1300,13 @@ function updateCounters(){
   }
   const inPl = state.view === 'playlist' && state.activePlaylistId;
   const pl = state.playlists.find(p => p.id === state.activePlaylistId);
-  const ro = pl && pl.is_readonly;
+  const canEdit = pl && (isAdmin() || pl.owner === state.me.username) && !pl.is_readonly;
   const btnRm = document.getElementById('ab-remove');
   const btnAdd = document.getElementById('ab-add');
-  if (btnRm) btnRm.style.display = inPl && !ro ? '' : 'none';
+  if (btnRm) btnRm.style.display = inPl && canEdit ? '' : 'none';
   if (btnAdd) btnAdd.style.display = '';
   const btnAddSongs = document.getElementById('btn-add-songs-to-playlist');
-  if (btnAddSongs) btnAddSongs.style.display = inPl && !ro ? '' : 'none';
+  if (btnAddSongs) btnAddSongs.style.display = inPl && canEdit ? '' : 'none';
 }
 
 function renderSidebar(){
@@ -1245,9 +1331,11 @@ function renderSidebar(){
     const active = state.mainView === 'songs' && state.view === 'playlist' && state.activePlaylistId === p.id ? ' active' : '';
     const ro = p.is_readonly ? ' ro' : '';
     const cnt = p.song_count != null ? p.song_count : '';
+    const showOwner = isAdmin() && p.owner && p.owner !== state.me.username;
+    const ownerTag = showOwner ? '<span class="pl-owner">' + esc(p.owner) + '</span>' : '';
     return '<div class="nav-item' + active + ro + '" data-pl-id="' + esc(p.id) + '">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
-      + '<span class="nav-label">' + esc(p.name) + '</span>'
+      + '<span class="nav-label">' + esc(p.name) + ownerTag + '</span>'
       + '<span class="nav-count">' + cnt + '</span>'
       + '<button class="pl-del" data-pl-id="' + esc(p.id) + '" title="删除歌单">✕</button>'
       + '</div>';
@@ -1275,6 +1363,7 @@ function applyFilter(){
 
 function setViewTitle(){
   if (state.mainView === 'tasks'){ $('#view-title').textContent = '任务中心'; $('#toolbar').style.display = 'none'; $('#search-wrap').style.display = 'none'; }
+  else if (state.mainView === 'users'){ $('#view-title').textContent = '用户管理'; $('#toolbar').style.display = 'none'; $('#search-wrap').style.display = 'none'; }
   else if (state.mainView === 'settings'){ $('#view-title').textContent = '设置'; $('#toolbar').style.display = 'none'; $('#search-wrap').style.display = 'none'; }
   else if (state.mainView === 'artists'){ $('#view-title').textContent = '艺术家'; $('#toolbar').style.display = 'none'; $('#search-wrap').style.display = 'none'; }
   else if (state.mainView === 'albums'){ $('#view-title').textContent = '专辑'; $('#toolbar').style.display = 'none'; $('#search-wrap').style.display = 'none'; }
@@ -1289,13 +1378,18 @@ function setViewTitle(){
 }
 
 function switchMainView(name){
+  if (!isAdmin() && (name === 'tasks' || name === 'settings' || name === 'users')){
+    toast('需要管理员权限', 'err');
+    return;
+  }
   state.mainView = name;
   $('#view-songs').style.display = name === 'songs' ? '' : 'none';
   if ($('#view-artists')) $('#view-artists').style.display = name === 'artists' ? '' : 'none';
   if ($('#view-albums')) $('#view-albums').style.display = name === 'albums' ? '' : 'none';
   $('#view-tasks').style.display = name === 'tasks' ? '' : 'none';
+  $('#view-users').style.display = name === 'users' ? '' : 'none';
   $('#view-settings').style.display = name === 'settings' ? '' : 'none';
-  var navMap = {songs:'nav-all', artists:'nav-artists', albums:'nav-albums', tasks:'nav-tasks', settings:'nav-settings'};
+  var navMap = {songs:'nav-all', artists:'nav-artists', albums:'nav-albums', tasks:'nav-tasks', users:'nav-users', settings:'nav-settings'};
   Object.keys(navMap).forEach(function(k){
     var el = document.getElementById(navMap[k]);
     if (el) el.classList.toggle('active', k === name);
@@ -1304,6 +1398,7 @@ function switchMainView(name){
   $('#actionbar').classList.toggle('show', state.selected.size > 0 && name === 'songs');
   setViewTitle();
   if (name === 'tasks') loadTasks();
+  if (name === 'users') loadUsers();
   if (name === 'settings') loadSettings();
   if (name === 'artists' && typeof renderArtists === 'function') renderArtists();
   if (name === 'albums' && typeof renderAlbums === 'function') renderAlbums();
@@ -1330,6 +1425,7 @@ function loadUIState(){
 async function loadSongs(){ const d = await api('/api/songs'); state.songs = d.songs || d.items || []; }
 async function loadPlaylists(){ const d = await api('/api/playlists'); state.playlists = d.playlists || []; }
 async function loadSources(){ const d = await api('/api/sources'); state.sources = d.sources || []; }
+async function loadUsers(){ const d = await api('/api/users'); state.users = d.users || []; if ($('#count-users')) $('#count-users').textContent = state.users.length; }
 
 async function loadPlaylistTracks(plId){
   try {
@@ -1537,6 +1633,142 @@ async function loadTasks(){
   } catch (e){
     box.innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
   }
+}
+
+// ---------- 用户管理 ----------
+
+function renderUsers(){
+  const box = $('#users-body');
+  if (!state.users.length){
+    box.innerHTML = '<div class="empty"><div class="empty-title">还没有用户</div><div class="empty-sub">点上方「新增用户」开始</div></div>';
+    return;
+  }
+  box.innerHTML = state.users.map(u => {
+    const role = u.role || 'user';
+    const isMe = u.username === state.me.username;
+    const srcCount = (u.sources || []).length;
+    const srcText = role === 'admin' ? '全部音源' : (srcCount + ' 个音源');
+    const enableText = u.enabled === false ? ' · <span style="color:var(--danger)">已禁用</span>' : '';
+    return '<div class="user-card' + (u.enabled === false ? ' user-disabled' : '') + '">'
+      + '<div class="user-card-head">'
+      +   '<div class="user-avatar">' + esc(u.username.charAt(0).toUpperCase()) + '</div>'
+      +   '<div class="user-info">'
+      +     '<div class="user-name">' + esc(u.username)
+      +       (isMe ? '<span style="font-size:11px;color:var(--accent-h);font-weight:normal">（我）</span>' : '')
+      +       '<span class="user-role-badge ' + esc(role) + '">' + esc(role) + '</span>'
+      +     '</div>'
+      +     '<div class="user-meta">' + esc(srcText) + enableText + ' · ' + esc(u.created_at || '') + '</div>'
+      +   '</div>'
+      +   '<div class="user-actions">'
+      +     '<button class="btn-ghost btn-user-edit" data-user="' + esc(u.username) + '">编辑</button>'
+      +     (isMe ? '' : '<button class="btn-ghost danger btn-user-del" data-user="' + esc(u.username) + '">删除</button>')
+      +   '</div>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+  box.querySelectorAll('.btn-user-edit').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const u = state.users.find(x => x.username === btn.dataset.user);
+      if (u) openUserModal(u);
+    });
+  });
+  box.querySelectorAll('.btn-user-del').forEach(function(btn){
+    btn.addEventListener('click', async function(){
+      const u = btn.dataset.user;
+      if (!confirm('删除用户「' + u + '」？该用户的歌单也会保留但无法访问。')) return;
+      try {
+        await api('/api/users/' + encodeURIComponent(u), { method: 'DELETE' });
+        toast('已删除', 'ok');
+        await loadUsers();
+        renderUsers();
+      } catch (e){ toast('删除失败：' + e.message, 'err'); }
+    });
+  });
+}
+
+function renderUserSourceList(checked){
+  const box = $('#user-source-list');
+  const set = new Set(checked || []);
+  if (!state.sources.length){
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-3)">暂无音源</div>';
+    return;
+  }
+  box.innerHTML = state.sources.map(s => {
+    const on = set.has(s.id);
+    return '<label class="src-checkbox' + (on ? ' checked' : '') + '">'
+      + '<input type="checkbox" value="' + esc(s.id) + '"' + (on ? ' checked' : '') + '>'
+      + '<span>' + esc(s.name) + '</span>'
+      + '</label>';
+  }).join('');
+  box.querySelectorAll('.src-checkbox').forEach(function(el){
+    const input = el.querySelector('input');
+    el.addEventListener('click', function(e){
+      if (e.target === input) return;
+      input.checked = !input.checked;
+      el.classList.toggle('checked', input.checked);
+    });
+    input.addEventListener('change', function(){
+      el.classList.toggle('checked', input.checked);
+    });
+  });
+}
+
+function openUserModal(user){
+  const m = $('#user-modal');
+  const isNew = !user;
+  $('#user-modal-title').textContent = isNew ? '新建用户' : '编辑用户';
+  $('#user-original').value = isNew ? '' : user.username;
+  $('#user-name').value = isNew ? '' : user.username;
+  $('#user-name').disabled = !isNew;
+  $('#user-password').value = '';
+  $('#user-password').placeholder = isNew ? '登录密码' : '留空=不改密码';
+  $('#user-password-label').textContent = isNew ? '密码' : '新密码（留空=不改）';
+  $('#user-role').value = isNew ? 'user' : (user.role || 'user');
+  if (isNew){
+    $('#user-enabled-label').style.display = 'none';
+  } else {
+    $('#user-enabled-label').style.display = 'flex';
+    $('#user-enabled').checked = user.enabled !== false;
+  }
+  renderUserSourceList(isNew ? [] : (user.sources || []));
+  m.classList.add('show');
+}
+
+async function submitUser(){
+  const original = $('#user-original').value;
+  const isNew = !original;
+  const username = $('#user-name').value.trim();
+  const password = $('#user-password').value;
+  const role = $('#user-role').value;
+  const enabled = $('#user-enabled').checked;
+  const sources = Array.from(document.querySelectorAll('#user-source-list input:checked')).map(x => x.value);
+
+  if (isNew && (!username || !password)){
+    toast('用户名和密码必填', 'err');
+    return;
+  }
+
+  try {
+    if (isNew){
+      await api('/api/users', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ username: username, password: password, role: role, sources: sources })
+      });
+      toast('用户已创建', 'ok');
+    } else {
+      const body = { role: role, sources: sources };
+      if (password) body.password = password;
+      body.enabled = enabled;
+      await api('/api/users/' + encodeURIComponent(original), {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      });
+      toast('已更新', 'ok');
+    }
+    $('#user-modal').classList.remove('show');
+    await loadUsers();
+    renderUsers();
+  } catch (e){ toast('失败：' + e.message, 'err'); }
 }
 
 function fillScanSourceOptions(){
@@ -1890,13 +2122,11 @@ function renderEditingPaths(){
       + '<button class="btn-ghost path-del" data-idx="' + i + '" style="height:32px">✕</button>'
       + '</div>';
   }).join('');
-  // 回填 provider 值
   box.querySelectorAll('.path-row').forEach(row => {
     const i = parseInt(row.dataset.idx, 10);
     const sel = row.querySelector('[data-field="provider_id"]');
     if (sel && state.editingSourcePaths[i]) sel.value = state.editingSourcePaths[i].provider_id || '';
   });
-  // 绑定事件
   box.querySelectorAll('.path-del').forEach(btn => {
     btn.addEventListener('click', function(){
       const i = parseInt(this.dataset.idx, 10);
@@ -1916,7 +2146,6 @@ function renderEditingPaths(){
       });
     });
   });
-  // 监听 provider 变化
   box.querySelectorAll('[data-field="provider_id"]').forEach(sel => {
     sel.addEventListener('change', function(){
       const row = this.closest('.path-row');
@@ -2057,16 +2286,10 @@ async function loadSettings(){
     window.__settings = st;
 
     await loadSources();
-    let users = [];
-    try {
-      const u = await api('/api/subsonic/users');
-      users = u.users || u.items || [];
-    } catch(_){}
 
     box.innerHTML = ''
       + renderSourcesForm()
       + renderStorageForm(window.__providerState)
-      + renderSubsonicPanel(users)
       + renderFormSection('NCM 音源', [
           { key: 'ncm_mode', label: '模式', value: st.ncm_mode || 'internal', type: 'select', options: [
               { value: 'internal', label: '内置（使用打包的 ncm-server）' },
@@ -2082,14 +2305,11 @@ async function loadSettings(){
       + renderFormSection('缓存与其他', [
           { key: 'range_size_kb', label: 'Range 读取(KB)', value: st.range_size_kb, placeholder: '1024' },
           { key: 'cache_ttl_min', label: '缓存 TTL(分钟)', value: st.cache_ttl_min, placeholder: '30' },
-          { key: 'cache_max_gb', label: '缓存上限(GB)', value: st.cache_max_gb, placeholder: '10' },
-          { key: 'subsonic_user', label: '默认 Subsonic 用户名', value: st.subsonic_user, placeholder: 'fire' },
-          { key: 'subsonic_pass', label: '默认 Subsonic 密码（留空=不改）', value: '', type: 'password', placeholder: '••••••' }
+          { key: 'cache_max_gb', label: '缓存上限(GB)', value: st.cache_max_gb, placeholder: '10' }
         ], 'cache');
 
     bindSourcesForm();
     bindStorageForm();
-    bindSubsonicPanel();
     bindSectionSaves();
   } catch (e){
     box.innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
@@ -2147,7 +2367,6 @@ function bindSectionSaves(){
       ['range_size_kb','cache_ttl_min','cache_max_gb','ncm_embedded_port'].forEach(function(k){
         if (k in data && data[k] !== '') data[k] = parseInt(data[k], 10) || 0;
       });
-      if (data.subsonic_pass === '') delete data.subsonic_pass;
       btn.disabled = true; btn.textContent = '保存中…';
       try {
         await api('/api/settings', {
@@ -2164,74 +2383,6 @@ function bindSectionSaves(){
   });
 }
 
-function renderSubsonicPanel(users){
-  const list = users.map(function(u){
-    const role = u.role || 'user';
-    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">'
-      + '<span style="font-weight:500">' + esc(u.username) + '</span>'
-      + '<span style="font-size:11px;color:var(--text-3);padding:2px 8px;background:var(--bg-2);border-radius:10px">' + esc(role) + '</span>'
-      + '<div style="flex:1"></div>'
-      + '<button class="btn-ghost btn-sub-reset" data-user="' + esc(u.username) + '">重置密码</button>'
-      + '<button class="btn-ghost btn-sub-del" data-user="' + esc(u.username) + '">删除</button>'
-      + '</div>';
-  }).join('') || '<div style="padding:12px 0;color:var(--text-3);font-size:13px">暂无 Subsonic 账号</div>';
-  return '<div class="card" data-section="subsonic" style="margin-bottom:16px">'
-    + '<div style="display:flex;align-items:center;margin-bottom:12px">'
-    +   '<div style="font-weight:600;font-size:14px">Subsonic 账号</div>'
-    + '</div>'
-    + list
-    + '<div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;align-items:end">'
-    +   '<label><div class="lbl">用户名</div><input class="input" id="sub-new-username"></label>'
-    +   '<label><div class="lbl">密码</div><input class="input" type="password" id="sub-new-password"></label>'
-    +   '<label><div class="lbl">角色</div><select class="select" id="sub-new-role"><option value="user">user</option><option value="admin">admin</option></select></label>'
-    +   '<button class="btn-primary" id="sub-add">新增</button>'
-    + '</div>'
-    + '</div>';
-}
-
-function bindSubsonicPanel(){
-  const addBtn = document.getElementById('sub-add');
-  if (addBtn) addBtn.addEventListener('click', async function(){
-    const username = document.getElementById('sub-new-username').value.trim();
-    const password = document.getElementById('sub-new-password').value;
-    const role = document.getElementById('sub-new-role').value;
-    if (!username || !password) return toast('用户名和密码必填', 'err');
-    try {
-      await api('/api/subsonic/users', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ username: username, password: password, role: role })
-      });
-      toast('账号已创建', 'ok');
-      await loadSettings();
-    } catch (e){ toast('创建失败：' + e.message, 'err'); }
-  });
-  document.querySelectorAll('.btn-sub-del').forEach(function(btn){
-    btn.addEventListener('click', async function(){
-      const user = btn.dataset.user;
-      if (!confirm('删除账号「' + user + '」？')) return;
-      try {
-        await api('/api/subsonic/users/' + encodeURIComponent(user), { method: 'DELETE' });
-        toast('已删除', 'ok');
-        await loadSettings();
-      } catch (e){ toast('删除失败：' + e.message, 'err'); }
-    });
-  });
-  document.querySelectorAll('.btn-sub-reset').forEach(function(btn){
-    btn.addEventListener('click', async function(){
-      const user = btn.dataset.user;
-      const pwd = prompt('输入「' + user + '」的新密码：');
-      if (!pwd) return;
-      try {
-        await api('/api/subsonic/users/' + encodeURIComponent(user), {
-          method: 'PATCH', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ password: pwd })
-        });
-        toast('密码已更新', 'ok');
-      } catch (e){ toast('更新失败：' + e.message, 'err'); }
-    });
-  });
-}
-
 async function addToPlaylist(){
   const sel = document.getElementById('ab-playlist-select');
   const plId = (sel && sel.value) || state.activePlaylistId;
@@ -2239,6 +2390,7 @@ async function addToPlaylist(){
   const pl = state.playlists.find(function(p){ return p.id === plId; });
   if (!pl) return toast('歌单不存在', 'err');
   if (pl.is_readonly) return toast('该歌单只读', 'err');
+  if (!isAdmin() && pl.owner !== state.me.username) return toast('只能修改自己的歌单', 'err');
   await loadPlaylistTracks(pl.id);
   const inList = new Set(state.playlistTracks.map(t => t.id));
   const picked = Array.from(state.selected);
@@ -2264,6 +2416,7 @@ async function addToPlaylist(){
 async function removeFromPlaylist(){
   const pl = state.playlists.find(p => p.id === state.activePlaylistId);
   if (!pl || pl.is_readonly) return toast('无法移除', 'err');
+  if (!isAdmin() && pl.owner !== state.me.username) return toast('只能修改自己的歌单', 'err');
   const ids = Array.from(state.selected);
   if (!ids.length) return;
   if (!confirm('从「' + pl.name + '」移除 ' + ids.length + ' 首？')) return;
@@ -2770,6 +2923,7 @@ if ($('#albums-body')) $('#albums-body').addEventListener('click', function(e){
 });
 
 $('#nav-tasks').addEventListener('click', () => switchMainView('tasks'));
+$('#nav-users').addEventListener('click', () => switchMainView('users'));
 $('#nav-settings').addEventListener('click', () => switchMainView('settings'));
 
 $('#pl-list').addEventListener('click', async e => {
@@ -2942,7 +3096,12 @@ $('#scan-modal').addEventListener('click', e => { if (e.target.id === 'scan-moda
 $('#btn-refresh-tasks').addEventListener('click', loadTasks);
 $('#btn-refresh-settings').addEventListener('click', loadSettings);
 
-// 音源弹窗事件
+$('#btn-new-user').addEventListener('click', () => openUserModal(null));
+$('#btn-refresh-users').addEventListener('click', async () => { await loadUsers(); renderUsers(); });
+$('#user-cancel').addEventListener('click', () => $('#user-modal').classList.remove('show'));
+$('#user-modal').addEventListener('click', e => { if (e.target.id === 'user-modal') e.target.classList.remove('show'); });
+$('#user-submit').addEventListener('click', submitUser);
+
 $('#src-cancel').addEventListener('click', () => $('#source-modal').classList.remove('show'));
 $('#source-modal').addEventListener('click', e => { if (e.target.id === 'source-modal') e.target.classList.remove('show'); });
 $('#src-add-path').addEventListener('click', function(){
@@ -2955,7 +3114,6 @@ $('#src-submit').addEventListener('click', async function(){
   const id = $('#src-id').value;
   const name = $('#src-name').value.trim();
   if (!name){ toast('音源名称必填', 'err'); return; }
-  // 从 UI 收集路径
   const rows = document.querySelectorAll('#src-paths-list .path-row');
   const paths = [];
   rows.forEach(row => {
@@ -2986,7 +3144,6 @@ $('#src-submit').addEventListener('click', async function(){
   } catch(e){ toast('保存失败：' + e.message, 'err'); }
 });
 
-// 目录浏览弹窗
 $('#src-dir-cancel').addEventListener('click', () => $('#src-dir-modal').classList.remove('show'));
 $('#src-dir-modal').addEventListener('click', e => { if (e.target.id === 'src-dir-modal') e.target.classList.remove('show'); });
 $('#src-dir-up').addEventListener('click', function(){
@@ -3000,9 +3157,18 @@ $('#src-dir-pick').addEventListener('click', function(){
   $('#src-dir-modal').classList.remove('show');
 });
 
+$('#btn-logout').addEventListener('click', async () => {
+  if (!confirm('退出登录？')) return;
+  try {
+    await fetch('/api/web-auth/logout', {method: 'POST', credentials: 'same-origin'});
+  } catch(e){}
+  location.reload();
+});
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape'){
     if ($('#src-dir-modal').classList.contains('show')) { $('#src-dir-modal').classList.remove('show'); return; }
+    if ($('#user-modal').classList.contains('show')) { $('#user-modal').classList.remove('show'); return; }
     if ($('#np-page').classList.contains('show')) { closeNP(); return; }
     if ($('#queue-panel').classList.contains('show')) { toggleQueue(false); return; }
     if (state.selected.size){ state.selected.clear(); render(); }
@@ -3060,13 +3226,44 @@ async function createPlaylist(){
   finally { $('#pl-submit').disabled = false; }
 }
 
+function applyRoleUI(){
+  const admin = isAdmin();
+  if (admin){
+    $('#admin-nav-section').style.display = '';
+    $('#btn-online-search').style.display = '';
+    $('#btn-delete').style.display = '';
+  } else {
+    $('#admin-nav-section').style.display = 'none';
+    $('#btn-online-search').style.display = 'none';
+    $('#btn-delete').style.display = 'none';
+  }
+  const nu = $('#nav-user');
+  if (state.me.username){
+    nu.style.display = '';
+    $('#nav-user-avatar').textContent = state.me.username.charAt(0).toUpperCase();
+    $('#nav-user-name').textContent = state.me.username;
+    const roleEl = $('#nav-user-role');
+    roleEl.textContent = admin ? '管理员' : '普通用户';
+    roleEl.className = 'nav-user-role' + (admin ? ' admin' : '');
+  }
+}
+
 async function boot(){
   try {
+    let session;
     try {
-      const sess = await fetch('/api/web-auth/session', {credentials:'same-origin'});
-      if (sess.status === 401){ showLoginModal(); return; }
-    } catch(e){}
+      const r = await fetch('/api/web-auth/session', {credentials:'same-origin'});
+      if (r.status === 401){ showLoginModal(); return; }
+      session = await r.json();
+    } catch(e){ showLoginModal(); return; }
+
+    state.me.username = session.username || '';
+    state.me.role = session.role || 'user';
+
+    applyRoleUI();
+
     await Promise.all([loadSongs(), loadPlaylists(), loadSources()]);
+
     const saved = loadUIState();
     if (saved){
       if (saved.pageSize) state.pageSize = saved.pageSize;
@@ -3088,7 +3285,7 @@ async function boot(){
     if (state.filterSource && $('#f-source')) $('#f-source').value = state.filterSource;
     if (saved && saved.page) state.page = saved.page;
     applyFilter();
-    if (saved && saved.mainView && saved.mainView !== 'songs') switchMainView(saved.mainView);
+    if (saved && saved.mainView && saved.mainView !== 'songs' && isAdmin()) switchMainView(saved.mainView);
     else setViewTitle();
   } catch (e){
     $('#list-body').innerHTML = '<div class="empty"><div class="empty-title">加载失败</div><div class="empty-sub">' + esc(e.message) + '</div></div>';
