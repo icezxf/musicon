@@ -18,6 +18,7 @@ import (
 	"github.com/icezxf/musicon-go/internal/config"
 	"github.com/icezxf/musicon-go/internal/db"
 	"github.com/icezxf/musicon-go/internal/lx"
+	"github.com/icezxf/musicon-go/internal/ncm"
 	"github.com/icezxf/musicon-go/internal/settings"
 	"github.com/icezxf/musicon-go/internal/subsonic"
 )
@@ -43,6 +44,7 @@ func main() {
 	settingsMgr := settings.New(database)
 	alistMgr := alist.NewManager(settingsMgr)
 	lxClient := lx.New(settingsMgr, holder)
+	ncmClient := ncm.New(settingsMgr.GetNCMURL(), holder)
 
 	var bgWG sync.WaitGroup
 
@@ -61,8 +63,8 @@ func main() {
 		http.ServeFile(w, r, cfg.StaticDir+"/index.html")
 	})
 
-	api.New(holder, alistMgr, lxClient, cfg, settingsMgr, &bgWG).Mount(mux)
-	subsonic.New(holder, alistMgr, lxClient, cfg).Mount(mux)
+	api.New(holder, alistMgr, lxClient, ncmClient, cfg, settingsMgr, &bgWG).Mount(mux)
+	subsonic.New(holder, alistMgr, lxClient, ncmClient, cfg).Mount(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
