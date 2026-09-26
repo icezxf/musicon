@@ -7,30 +7,85 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/icezxf/musicon-go/internal/settings"
 )
 
-type Client struct {
+// ==================== Manager ====================
+
+type Manager struct {
 	Settings *settings.Manager
-	http     *http.Client
+	mu       sync.Mutex
+	cache    map[string]*Client
 }
 
+func NewManager(s *settings.Manager) *Manager {
+	return &Manager{Settings: s, cache: map[string]*Client{}}
+}
+
+// Get 按 providerID 拿 client（缓存复用）
+func (m *Manager) Get(id string) *Client {
+	if id == "" {
+		id = "default"
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.cache[id]; ok {
+		return c
+	}
+	c := &Client{
+		Settings:   m.Settings,
+		ProviderID: id,
+		http:       &http.Client{Timeout: 30 * time.Second},
+	}
+	m.cache[id] = c
+	return c
+}
+
+// Refresh 清空缓存（设置变更后调用）
+func (m *Manager) Refresh() {
+	m.mu.Lock()
+	m.cache = map[string]*Client{}
+	m.mu.Unlock()
+}
+
+// ==================== Client ====================
+
+type Client struct {
+	Settings   *settings.Manager
+	ProviderID string
+	http       *http.Client
+}
+
+// 兼容旧代码：New 返回默认 client（等价于 Manager.Get("default")）
 func New(s *settings.Manager) *Client {
 	return &Client{
-		Settings: s,
-		http:     &http.Client{Timeout: 30 * time.Second},
+		Settings:   s,
+		ProviderID: "default",
+		http:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-func (c *Client) base() string {
-	return strings.TrimRight(c.Settings.GetAList().URL, "/")
+func (c *Client) cfg() *settings.AListConfig {
+	return c.Settings.GetAListByID(c.ProviderID)
 }
 
-// ensureToken 返回可用 token；为空则用账号密码重新登录
+func (c *Client) base() string {
+	return strings.TrimRight(c.cfg().URL, "/")
+}
+
+func (c *Client) saveToken(tok string) {
+	if c.ProviderID == "" || c.ProviderID == "default" {
+		c.Settings.Set("alist_token", tok)
+		return
+	}
+	_ = c.Settings.SetAListTokenByID(c.ProviderID, tok)
+}
+
 func (c *Client) ensureToken() (string, error) {
-	cfg := c.Settings.GetAList()
+	cfg := c.cfg()
 	if cfg.Token != "" {
 		return cfg.Token, nil
 	}
@@ -41,13 +96,12 @@ func (c *Client) ensureToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	c.Settings.Set("alist_token", tok)
+	c.saveToken(tok)
 	return tok, nil
 }
 
-// forceRelogin 清掉旧 token 并重新登录（token 过期时用）
 func (c *Client) forceRelogin() (string, error) {
-	c.Settings.Set("alist_token", "")
+	c.saveToken("")
 	return c.ensureToken()
 }
 
@@ -184,7 +238,6 @@ func (c *Client) GetRawURL(path string) (string, error) {
 	return c.doGetRawURL(path, tok2)
 }
 
-// isAuthError 判断错误是否是 token 失效 / 未授权
 func isAuthError(err error) bool {
 	if err == nil {
 		return false
