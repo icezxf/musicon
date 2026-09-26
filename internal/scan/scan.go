@@ -33,7 +33,8 @@ type Scanner struct {
 	WG       *sync.WaitGroup
 }
 
-func (s *Scanner) Run(taskID, rootPath, providerID string) {
+// Run 扫描：providerID 决定用哪个 AList；sourceID 决定歌曲归属哪个音源
+func (s *Scanner) Run(taskID, rootPath, providerID, sourceID string) {
 	if s.WG != nil {
 		s.WG.Add(1)
 		defer s.WG.Done()
@@ -47,15 +48,15 @@ func (s *Scanner) Run(taskID, rootPath, providerID string) {
 	if providerID == "" {
 		providerID = "alist-1"
 	}
-	log.Printf("[scan] start %s path=%s provider=%s", taskID, rootPath, providerID)
+	log.Printf("[scan] start %s path=%s provider=%s source=%s", taskID, rootPath, providerID, sourceID)
 	total := 0
 	processed := 0
-	s.walk(taskID, rootPath, providerID, &total, &processed)
+	s.walk(taskID, rootPath, providerID, sourceID, &total, &processed)
 	s.DB.SetTaskStatus(taskID, "done")
 	log.Printf("[scan] done %s total=%d processed=%d", taskID, total, processed)
 }
 
-func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
+func (s *Scanner) walk(taskID, dir, providerID, sourceID string, total, processed *int) {
 	client := s.AList.Get(providerID)
 	entries, err := client.List(dir)
 	if err != nil {
@@ -65,7 +66,7 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 	for _, e := range entries {
 		full := path.Join(dir, e.Name)
 		if e.IsDir {
-			s.walk(taskID, full, providerID, total, processed)
+			s.walk(taskID, full, providerID, sourceID, total, processed)
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(e.Name))
@@ -74,7 +75,7 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 			continue
 		}
 		*total++
-		if err := s.probeAndSave(client, full, providerID, fmtName, e.Size); err != nil {
+		if err := s.probeAndSave(client, full, providerID, sourceID, fmtName, e.Size); err != nil {
 			log.Printf("[scan] probe %s: %v", full, err)
 			continue
 		}
@@ -86,14 +87,13 @@ func (s *Scanner) walk(taskID, dir, providerID string, total, processed *int) {
 	s.DB.SetTaskProgress(taskID, *total, *processed)
 }
 
-func (s *Scanner) probeAndSave(client *alist.Client, fullPath, providerID, fmtName string, fileSize int64) error {
+func (s *Scanner) probeAndSave(client *alist.Client, fullPath, providerID, sourceID, fmtName string, fileSize int64) error {
 	rawURL, err := client.GetRawURL(fullPath)
 	if err != nil {
 		return err
 	}
 	filename := path.Base(fullPath)
 
-	// 无标签格式：直接文件名入库
 	if noTagFormats[fmtName] {
 		title := strings.TrimSuffix(filename, filepath.Ext(filename))
 		artist := ""
@@ -109,6 +109,7 @@ func (s *Scanner) probeAndSave(client *alist.Client, fullPath, providerID, fmtNa
 			Fmt:        fmtName,
 			Path:       fullPath,
 			ProviderID: providerID,
+			SourceID:   sourceID,
 			FileSize:   fileSize,
 		})
 	}
@@ -178,6 +179,7 @@ func (s *Scanner) probeAndSave(client *alist.Client, fullPath, providerID, fmtNa
 		Dur:         info.Duration,
 		Path:        fullPath,
 		ProviderID:  providerID,
+		SourceID:    sourceID,
 		CoverPath:   coverPath,
 		Lyrics:      info.Lyrics,
 		TrackNumber: info.TrackNumber,
