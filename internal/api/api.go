@@ -406,7 +406,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/users/"))
 	if u == "" {
-		u = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
+		u, _ = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
 	}
 	var body struct {
 		Password string   `json:"password"`
@@ -437,7 +437,7 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	u, _ := url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/users/"))
 	if u == "" {
-		u = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
+		u, _ = url.PathUnescape(strings.TrimPrefix(r.URL.Path, "/api/subsonic/users/"))
 	}
 	if u == "" {
 		writeJSON(w, 400, map[string]any{"detail": "缺少用户名"})
