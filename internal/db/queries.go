@@ -433,16 +433,42 @@ func (h *Holder) ClearArtistCache(name string) error {
 
 // ============ 音源 ============
 
-type Source struct {
+type SourcePath struct {
 	ID         string `json:"id"`
-	Name       string `json:"name"`
+	SourceID   string `json:"source_id"`
 	ProviderID string `json:"provider_id"`
 	Path       string `json:"path"`
-	CreatedAt  string `json:"created_at"`
+	SortOrder  int    `json:"sort_order"`
+}
+
+type Source struct {
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	ProviderID string      `json:"provider_id,omitempty"`
+	Path      string       `json:"path,omitempty"`
+	Paths     []SourcePath `json:"paths"`
+	CreatedAt string       `json:"created_at"`
+}
+
+func (h *Holder) loadSourcePaths(sourceID string) ([]SourcePath, error) {
+	rows, err := h.DB.Query(`SELECT id, source_id, provider_id, path, COALESCE(sort_order,0) FROM source_paths WHERE source_id=? ORDER BY sort_order, id`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SourcePath{}
+	for rows.Next() {
+		var p SourcePath
+		if err := rows.Scan(&p.ID, &p.SourceID, &p.ProviderID, &p.Path, &p.SortOrder); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 func (h *Holder) ListSources() ([]Source, error) {
-	rows, err := h.DB.Query(`SELECT id,name,provider_id,path,COALESCE(created_at,'') FROM sources ORDER BY created_at DESC`)
+	rows, err := h.DB.Query(`SELECT id, name, provider_id, path, COALESCE(created_at,'') FROM sources ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -453,35 +479,100 @@ func (h *Holder) ListSources() ([]Source, error) {
 		if err := rows.Scan(&s.ID, &s.Name, &s.ProviderID, &s.Path, &s.CreatedAt); err != nil {
 			continue
 		}
+		s.Paths, _ = h.loadSourcePaths(s.ID)
+		if s.Paths == nil {
+			s.Paths = []SourcePath{}
+		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
 }
 
 func (h *Holder) GetSource(id string) (*Source, error) {
-	row := h.DB.QueryRow(`SELECT id,name,provider_id,path,COALESCE(created_at,'') FROM sources WHERE id=?`, id)
+	row := h.DB.QueryRow(`SELECT id, name, provider_id, path, COALESCE(created_at,'') FROM sources WHERE id=?`, id)
 	var s Source
 	if err := row.Scan(&s.ID, &s.Name, &s.ProviderID, &s.Path, &s.CreatedAt); err != nil {
 		return nil, err
 	}
+	s.Paths, _ = h.loadSourcePaths(s.ID)
+	if s.Paths == nil {
+		s.Paths = []SourcePath{}
+	}
 	return &s, nil
 }
 
-func (h *Holder) CreateSource(name, providerID, path string) (string, error) {
+func (h *Holder) CreateSource(name string, paths []SourcePath) (string, error) {
 	id := newShortID("src")
-	_, err := h.DB.Exec(`INSERT INTO sources(id,name,provider_id,path) VALUES(?,?,?,?)`,
-		id, name, providerID, path)
-	return id, err
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	firstProvider, firstPath := "", ""
+	if len(paths) > 0 {
+		firstProvider = paths[0].ProviderID
+		firstPath = paths[0].Path
+	}
+	if _, err := tx.Exec(`INSERT INTO sources(id,name,provider_id,path) VALUES(?,?,?,?)`,
+		id, name, firstProvider, firstPath); err != nil {
+		return "", err
+	}
+
+	for i, p := range paths {
+		pid := newShortID("sp")
+		if _, err := tx.Exec(`INSERT INTO source_paths(id,source_id,provider_id,path,sort_order) VALUES(?,?,?,?,?)`,
+			pid, id, p.ProviderID, p.Path, i); err != nil {
+			return "", err
+		}
+	}
+	return id, tx.Commit()
 }
 
-func (h *Holder) UpdateSource(id, name, providerID, path string) error {
-	_, err := h.DB.Exec(`UPDATE sources SET name=?, provider_id=?, path=? WHERE id=?`,
-		name, providerID, path, id)
-	return err
+func (h *Holder) UpdateSource(id, name string, paths []SourcePath) error {
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	firstProvider, firstPath := "", ""
+	if len(paths) > 0 {
+		firstProvider = paths[0].ProviderID
+		firstPath = paths[0].Path
+	}
+	if _, err := tx.Exec(`UPDATE sources SET name=?, provider_id=?, path=? WHERE id=?`,
+		name, firstProvider, firstPath, id); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM source_paths WHERE source_id=?`, id); err != nil {
+		return err
+	}
+	for i, p := range paths {
+		pid := newShortID("sp")
+		if _, err := tx.Exec(`INSERT INTO source_paths(id,source_id,provider_id,path,sort_order) VALUES(?,?,?,?,?)`,
+			pid, id, p.ProviderID, p.Path, i); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (h *Holder) DeleteSource(id string) error {
-	_, err := h.DB.Exec(`DELETE FROM sources WHERE id=?`, id)
-	h.DB.Exec(`DELETE FROM songs WHERE source_id=?`, id)
-	return err
+	tx, err := h.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM source_paths WHERE source_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sources WHERE id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM songs WHERE source_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
