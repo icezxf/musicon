@@ -36,11 +36,12 @@ type Song struct {
 	FileSize    int64  `json:"file_size"`
 	ISRC        string `json:"isrc"`
 	BPM         int    `json:"bpm"`
+	SourceID    string `json:"source_id"`
 }
 
-const songColumns = `id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,cover_path,cover_art,lyrics,plays,track_number,disc_number,year,composer,bitrate,sample_rate,channels,file_size,isrc,bpm`
+const songColumns = `id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,cover_path,cover_art,lyrics,plays,track_number,disc_number,year,composer,bitrate,sample_rate,channels,file_size,isrc,bpm,source_id`
 
-const songColumnsAliased = `s.id,s.title,s.artist,s.album,s.album_artist,s.genre,s.fmt,s.dur,s.path,s.provider_id,s.cover_path,s.cover_art,s.lyrics,s.plays,s.track_number,s.disc_number,s.year,s.composer,s.bitrate,s.sample_rate,s.channels,s.file_size,s.isrc,s.bpm`
+const songColumnsAliased = `s.id,s.title,s.artist,s.album,s.album_artist,s.genre,s.fmt,s.dur,s.path,s.provider_id,s.cover_path,s.cover_art,s.lyrics,s.plays,s.track_number,s.disc_number,s.year,s.composer,s.bitrate,s.sample_rate,s.channels,s.file_size,s.isrc,s.bpm,s.source_id`
 
 func scanSong(rows interface{ Scan(...any) error }) (Song, error) {
 	var s Song
@@ -49,6 +50,7 @@ func scanSong(rows interface{ Scan(...any) error }) (Song, error) {
 		&s.Dur, &s.Path, &s.ProviderID, &s.CoverPath, &s.CoverArt, &s.Lyrics, &s.Plays,
 		&s.TrackNumber, &s.DiscNumber, &s.Year, &s.Composer,
 		&s.Bitrate, &s.SampleRate, &s.Channels, &s.FileSize, &s.ISRC, &s.BPM,
+		&s.SourceID,
 	)
 	return s, err
 }
@@ -58,8 +60,8 @@ func (h *Holder) UpsertSong(s Song) error {
 		INSERT INTO songs (
 			id,title,artist,album,album_artist,genre,fmt,dur,path,provider_id,
 			cover_path,cover_art,lyrics,track_number,disc_number,year,composer,
-			bitrate,sample_rate,channels,file_size,isrc,bpm
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			bitrate,sample_rate,channels,file_size,isrc,bpm,source_id
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title, artist=excluded.artist, album=excluded.album,
 			album_artist=excluded.album_artist, genre=excluded.genre, fmt=excluded.fmt,
@@ -72,11 +74,13 @@ func (h *Holder) UpsertSong(s Song) error {
 			bitrate=excluded.bitrate, sample_rate=excluded.sample_rate,
 			channels=excluded.channels, file_size=excluded.file_size,
 			isrc=excluded.isrc, bpm=excluded.bpm,
+			source_id=CASE WHEN excluded.source_id!='' THEN excluded.source_id ELSE songs.source_id END,
 			updated_at=CURRENT_TIMESTAMP
 	`, s.ID, s.Title, s.Artist, s.Album, s.AlbumArtist, s.Genre, s.Fmt, s.Dur,
 		s.Path, s.ProviderID, s.CoverPath, s.CoverArt, s.Lyrics,
 		s.TrackNumber, s.DiscNumber, s.Year, s.Composer,
-		s.Bitrate, s.SampleRate, s.Channels, s.FileSize, s.ISRC, s.BPM)
+		s.Bitrate, s.SampleRate, s.Channels, s.FileSize, s.ISRC, s.BPM,
+		s.SourceID)
 	return err
 }
 
@@ -393,7 +397,6 @@ func (h *Holder) DeleteSongs(ids []string) error {
 
 // ============ 歌手缓存 ============
 
-// LoadArtist 读取歌手缓存
 func (h *Holder) LoadArtist(name string) (string, string, string, time.Time, bool) {
 	row := h.DB.QueryRow(`SELECT pic, bio, source, updated_at FROM artist_cache WHERE name=?`, name)
 	var pic, bio, source, updated string
@@ -410,7 +413,6 @@ func (h *Holder) LoadArtist(name string) (string, string, string, time.Time, boo
 	return pic, bio, source, t, true
 }
 
-// SaveArtist 写入/更新歌手缓存
 func (h *Holder) SaveArtist(name, pic, bio, source string) error {
 	if name == "" {
 		return nil
@@ -424,8 +426,62 @@ func (h *Holder) SaveArtist(name, pic, bio, source string) error {
 	return err
 }
 
-// ClearArtistCache 清空某个歌手的缓存
 func (h *Holder) ClearArtistCache(name string) error {
 	_, err := h.DB.Exec(`DELETE FROM artist_cache WHERE name=?`, name)
+	return err
+}
+
+// ============ 音源 ============
+
+type Source struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ProviderID string `json:"provider_id"`
+	Path       string `json:"path"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (h *Holder) ListSources() ([]Source, error) {
+	rows, err := h.DB.Query(`SELECT id,name,provider_id,path,COALESCE(created_at,'') FROM sources ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Source{}
+	for rows.Next() {
+		var s Source
+		if err := rows.Scan(&s.ID, &s.Name, &s.ProviderID, &s.Path, &s.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (h *Holder) GetSource(id string) (*Source, error) {
+	row := h.DB.QueryRow(`SELECT id,name,provider_id,path,COALESCE(created_at,'') FROM sources WHERE id=?`, id)
+	var s Source
+	if err := row.Scan(&s.ID, &s.Name, &s.ProviderID, &s.Path, &s.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (h *Holder) CreateSource(name, providerID, path string) (string, error) {
+	id := newShortID("src")
+	_, err := h.DB.Exec(`INSERT INTO sources(id,name,provider_id,path) VALUES(?,?,?,?)`,
+		id, name, providerID, path)
+	return id, err
+}
+
+func (h *Holder) UpdateSource(id, name, providerID, path string) error {
+	_, err := h.DB.Exec(`UPDATE sources SET name=?, provider_id=?, path=? WHERE id=?`,
+		name, providerID, path, id)
+	return err
+}
+
+func (h *Holder) DeleteSource(id string) error {
+	_, err := h.DB.Exec(`DELETE FROM sources WHERE id=?`, id)
+	h.DB.Exec(`DELETE FROM songs WHERE source_id=?`, id)
 	return err
 }
