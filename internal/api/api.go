@@ -32,7 +32,7 @@ import (
 
 type Handler struct {
 	DB       *db.Holder
-	AList    *alist.Client
+	AList    *alist.Manager
 	LX       *lx.Client
 	NCM      *ncm.Client
 	Cfg      *config.Config
@@ -40,13 +40,12 @@ type Handler struct {
 	Scan     *scan.Scanner
 }
 
-func New(database *db.Holder, a *alist.Client, l *lx.Client, n *ncm.Client, c *config.Config, s *settings.Manager, bgWG *sync.WaitGroup) *Handler {
+func New(database *db.Holder, a *alist.Manager, l *lx.Client, n *ncm.Client, c *config.Config, s *settings.Manager, bgWG *sync.WaitGroup) *Handler {
 	sc := &scan.Scanner{DB: database, AList: a, CoverDir: c.DataDir + "/covers", WG: bgWG}
 	return &Handler{DB: database, AList: a, LX: l, NCM: n, Cfg: c, Settings: s, Scan: sc}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	// 公开接口
 	mux.HandleFunc("/api/web-auth/login", h.login)
 	mux.HandleFunc("/api/web-auth/logout", h.logout)
 	mux.HandleFunc("/api/web-auth/session", h.session)
@@ -54,7 +53,6 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/covers/thumb/", h.coverThumb)
 	mux.HandleFunc("GET /api/songs/{id}/stream", h.songStream)
 
-	// 需要会话
 	mux.HandleFunc("/api/", h.authWrap(h.handle))
 }
 
@@ -82,7 +80,6 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 虚拟歌曲（LX 在线歌曲）：尝试走 LX 拿真实 URL
 	if s.Fmt == "VIRTUAL" || strings.HasPrefix(s.ID, "lxv-") {
 		u, err := h.lxPlayURL(s)
 		if err != nil {
@@ -96,8 +93,11 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 本地/网盘歌曲：走 AList
-	u, err := h.AList.GetRawURL(s.Path)
+	pid := s.ProviderID
+	if pid == "" {
+		pid = "alist-1"
+	}
+	u, err := h.AList.Get(pid).GetRawURL(s.Path)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -106,7 +106,6 @@ func (h *Handler) songStream(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, u, http.StatusFound)
 }
 
-// lxPlayURL 尝试通过 lxserver 解析虚拟歌曲的真实播放地址
 func (h *Handler) lxPlayURL(s *db.Song) (string, error) {
 	rest := strings.TrimPrefix(s.ID, "lxv-")
 	parts := strings.SplitN(rest, "-", 2)
@@ -191,7 +190,6 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
-	// 歌曲
 	case p == "/api/songs" && r.Method == "GET":
 		h.listSongs(w, r)
 	case p == "/api/songs/top" && r.Method == "GET":
@@ -205,7 +203,6 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/songs/") && r.Method == "PUT":
 		h.updateSong(w, r)
 
-	// 歌单
 	case p == "/api/playlists" && r.Method == "GET":
 		h.listPlaylists(w, r)
 	case p == "/api/playlists" && r.Method == "POST":
@@ -217,7 +214,6 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/playlists/") && r.Method == "DELETE":
 		h.deletePlaylist(w, r)
 
-	// Subsonic 用户
 	case p == "/api/subsonic/users" && r.Method == "GET":
 		h.listSubUsers(w, r)
 	case p == "/api/subsonic/users" && r.Method == "POST":
@@ -227,17 +223,14 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/api/subsonic/users/") && r.Method == "DELETE":
 		h.deleteSubUser(w, r)
 
-	// 艺术家
 	case p == "/api/artist/photo" && r.Method == "GET":
 		h.artistPhoto(w, r)
 	case p == "/api/artist/refresh" && r.Method == "POST":
 		h.artistRefresh(w, r)
 
-	// AList 目录树
 	case p == "/api/alist/list" && r.Method == "GET":
 		h.alistList(w, r)
 
-	// LX 搜索 / 歌词 / 播放地址 / 导入库
 	case p == "/api/music/metadata-search" && r.Method == "GET":
 		h.metadataSearch(w, r)
 	case p == "/api/music/metadata-lyric" && r.Method == "GET":
@@ -247,13 +240,11 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/music/import" && r.Method == "POST":
 		h.musicImport(w, r)
 
-	// 任务
 	case p == "/api/tasks" && r.Method == "GET":
 		h.listTasks(w, r)
 	case p == "/api/scan" && r.Method == "POST":
 		h.startScan(w, r)
 
-	// 设置
 	case p == "/api/settings" && r.Method == "GET":
 		h.getSettings(w, r)
 	case p == "/api/settings" && r.Method == "POST":
@@ -261,13 +252,11 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/settings/storage/test" && r.Method == "POST":
 		h.testStorage(w, r)
 
-	// 统计
 	case p == "/api/stats" && r.Method == "GET":
 		h.stats(w, r)
 	case p == "/api/plays/recent" && r.Method == "GET":
 		h.recentPlays(w, r)
 
-	// LX / NCM 状态
 	case p == "/api/lx/status" && r.Method == "GET":
 		h.lxStatus(w, r)
 
@@ -503,7 +492,6 @@ func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 优先走 ncm
 	if h.NCM != nil {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && (d.Pic != "" || d.Bio != "") {
 			writeJSON(w, 200, map[string]any{
@@ -513,7 +501,6 @@ func (h *Handler) artistPhoto(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 回退 lxserver
 	d, err := h.LX.GetSingerDetail(name)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"name": name, "pic": "", "bio": "", "source": "none"})
@@ -551,7 +538,6 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 优先走 ncm
 	if h.NCM != nil {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 			proxyImageURL(w, d.Pic)
@@ -559,7 +545,6 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 回退 lxserver
 	d, err := h.LX.GetSingerDetail(name)
 	if err != nil || d.Pic == "" {
 		http.Error(w, "not found", 404)
@@ -568,7 +553,6 @@ func (h *Handler) artistImage(w http.ResponseWriter, r *http.Request) {
 	proxyImageURL(w, d.Pic)
 }
 
-// proxyImageURL 图片代理（网易云图床带 Referer 才不 403）
 func proxyImageURL(w http.ResponseWriter, rawURL string) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", rawURL, nil)
@@ -656,7 +640,14 @@ func (h *Handler) alistList(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/"
 	}
-	entries, err := h.AList.List(path)
+	pid := r.URL.Query().Get("provider_id")
+	if pid == "" {
+		pid = r.URL.Query().Get("source")
+	}
+	if pid == "" {
+		pid = "alist-1"
+	}
+	entries, err := h.AList.Get(pid).List(path)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"detail": err.Error()})
 		return
@@ -763,7 +754,6 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 
 	src, _ := body.SongInfo["source"].(string)
 
-	// 网易云源：优先走 ncm
 	if src == "wy" && h.NCM != nil {
 		songID := ""
 		if v, ok := body.SongInfo["id"]; ok {
@@ -780,7 +770,6 @@ func (h *Handler) musicPlayURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 其他源或 ncm 不可用：走 lxserver
 	u, err := h.LX.GetSongURL(body.SongInfo, body.Quality)
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"detail": err.Error()})
@@ -946,6 +935,9 @@ func (h *Handler) startScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"detail": "path 必填"})
 		return
 	}
+	if body.Source == "" {
+		body.Source = "alist-1"
+	}
 	h.Settings.Set("last_scan_path", body.Path)
 	taskID, err := h.DB.CreateScanTask(body.Path, body.Mode, body.Source)
 	if err != nil {
@@ -1003,7 +995,15 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) testStorage(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.AList.List("/")
+	var body struct {
+		ProviderID string `json:"provider_id"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	pid := body.ProviderID
+	if pid == "" {
+		pid = "alist-1"
+	}
+	entries, err := h.AList.Get(pid).List("/")
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"detail": map[string]any{
 			"message": err.Error(),
