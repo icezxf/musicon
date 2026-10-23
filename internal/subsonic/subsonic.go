@@ -125,7 +125,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[subsonic] %s user=%s id=%s type=%s", p, u, q.Get("id"), q.Get("type"))
+	log.Printf("[subsonic] %s user=%s id=%s type=%s c=%s", p, u, q.Get("id"), q.Get("type"), q.Get("c"))
 
 	switch p {
 	case "ping":
@@ -423,7 +423,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 		}
 	}
 	groups := map[string][]map[string]any{}
-	for artist, albums := range artistAlbums {
+	for artist := range artistAlbums {
 		runes := []rune(artist)
 		first := "#"
 		if len(runes) > 0 {
@@ -432,11 +432,10 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 				first = c
 			}
 		}
+		// 极度纯净：只返回 id 和 name，防止老客户端解析崩溃
 		groups[first] = append(groups[first], map[string]any{
-			"@id":         artistID(artist),
-			"@name":       artist,
-			"@albumCount": len(albums),
-			"@coverArt":   artistID(artist),
+			"@id":   artistID(artist),
+			"@name": artist,
 		})
 	}
 	keys := make([]string, 0, len(groups))
@@ -474,14 +473,12 @@ func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string
 		children := make([]map[string]any, 0, len(artists))
 		for _, a := range artists {
 			children = append(children, map[string]any{
-				"@id":       a["@id"],
-				"@parent":   "1",
-				"@isDir":    true,
-				"@title":    a["@name"],
-				"@name":     a["@name"],
-				"@artist":   a["@name"],
-				"@coverArt": a["@coverArt"],
-				"@created":  "2024-01-01T00:00:00.000Z",
+				"@id":      a["@id"],
+				"@parent":  "1",
+				"@isDir":   true,
+				"@title":   a["@name"],
+				"@name":    a["@name"],
+				"@created": "2024-01-01T00:00:00.000Z",
 			})
 		}
 		idx["child"] = children
@@ -564,14 +561,13 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 				}
 				seen[aid] = true
 				children = append(children, map[string]any{
-					"@id":       aid,
-					"@parent":   "1",
-					"@isDir":    true,
-					"@title":    n,
-					"@name":     n,
-					"@artist":   n,
-					"@coverArt": aid,
-					"@created":  "2024-01-01T00:00:00.000Z",
+					"@id":      aid,
+					"@parent":  "1",
+					"@isDir":   true,
+					"@title":   n,
+					"@name":    n,
+					"@artist":  n,
+					"@created": "2024-01-01T00:00:00.000Z",
 				})
 			}
 		}
@@ -624,7 +620,6 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 				"@name":      a.name,
 				"@album":     a.name,
 				"@artist":    a.artist,
-				"@coverArt":  aid,
 				"@songCount": a.count,
 				"@duration":  a.dur,
 				"@created":   "2024-01-01T00:00:00.000Z",
@@ -1263,9 +1258,9 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 }
 
 func serveDefaultCover(w http.ResponseWriter) {
-	// 使用 JPEG 默认图以防旧版 Android 解析 PNG 1x1 失败
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// 1x1 极小合法 JPEG 防崩
 	jpgData := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03, 0x02, 0x02, 0x02, 0x03, 0x03, 0x03, 0x03, 0x04, 0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08, 0x06, 0x06, 0x05, 0x06, 0x09, 0x08, 0x0a, 0x0c, 0x0c, 0x0b, 0x08, 0x0a, 0x0b, 0x0d, 0x0e, 0x0e, 0x0e, 0x0d, 0x0e, 0x0e, 0x0e, 0x0f, 0x11, 0x11, 0x0f, 0x10, 0x12, 0x15, 0x15, 0x16, 0x17, 0x16, 0x16, 0x14, 0x16, 0x16, 0x19, 0x19, 0x19, 0x1c, 0x1c, 0x1d, 0x1d, 0x1d, 0x1a, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xd5, 0xff, 0xd9}
 	w.Write(jpgData)
 }
@@ -1865,6 +1860,7 @@ func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
 	return map[string]any{
 		"@id":          id,
+		"@parent":      "1",
 		"@name":        name,
 		"@artist":      artist,
 		"@artistId":    artistID(artist),
@@ -1907,6 +1903,7 @@ func songToMap(s *db.Song) map[string]any {
 		coverArt = s.ID
 	}
 
+	// 极度纯净：严格遵循 Subsonic 1.16.1 标准，避免任何未定义扩展导致老客户端崩溃
 	m := map[string]any{
 		"@id":           s.ID,
 		"@parent":       aID,
@@ -1930,10 +1927,10 @@ func songToMap(s *db.Song) map[string]any {
 		"@channelCount": s.Channels,
 	}
 
-	// 条件字段：杜绝因为空字符串或0值导致棉花音乐等客户端解析崩溃
 	if s.AlbumArtist != "" {
 		m["@albumArtist"] = s.AlbumArtist
 	}
+	// 防止老客户端遇到 0 值或空字符串导致 SQLite 约束或数组越界报错
 	if s.TrackNumber > 0 {
 		m["@track"] = s.TrackNumber
 	}
@@ -1953,7 +1950,7 @@ func songToMap(s *db.Song) map[string]any {
 		m["@isrc"] = s.ISRC
 	}
 
-	// OpenSubsonic 扩展：音流等现代客户端强依赖，但必须保证值合法
+	// OpenSubsonic 扩展：保留这部分是为了让音流（Feishin）等现代客户端能正确解析多歌手
 	var artists []map[string]any
 	for _, name := range splitArtists(s.Artist) {
 		artists = append(artists, map[string]any{
