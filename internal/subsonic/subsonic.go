@@ -53,7 +53,6 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 
 // ==================== 权限辅助 ====================
 
-// visibleSongs 返回该用户能看到的歌曲（admin 全量）
 func (h *Handler) visibleSongs(username string) []db.Song {
 	songs, _ := h.DB.ListSongs()
 	role := h.DB.GetUserRole(username)
@@ -67,7 +66,6 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 	}
 	out := make([]db.Song, 0, len(songs))
 	for _, s := range songs {
-		// 在线歌（source_id 为空）所有登录用户可见
 		if s.SourceID == "" || set[s.SourceID] {
 			out = append(out, s)
 		}
@@ -115,7 +113,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
-	// [兼容性增强] 匿名 ping 放行（探测连通性）；带用户名的 ping 必须校验，避免“假连接”
 	if p == "ping" {
 		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
@@ -145,7 +142,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtists(w, r, u)
 	case "getArtist":
 		h.getArtist(w, r, u)
-	case "getMusicDirectory": // [兼容性增强] 新增：文件夹视图客户端必经端点
+	case "getMusicDirectory":
 		h.getMusicDirectory(w, r, u)
 	case "getAlbumList":
 		h.getAlbumList(w, r, u)
@@ -472,9 +469,6 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 
 func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string) {
 	groups := h.buildArtistGroups(h.visibleSongs(user))
-	// [兼容性增强] 每个 index 下同时输出 Directory 类型的 child，
-	// 让只解析 child 的文件夹视图客户端也能看到艺术家。
-	// id 与 artist 相同（ar-xxx），点击后走 getMusicDirectory(ar-xxx)。
 	for _, idx := range groups {
 		artists, _ := idx["artist"].([]map[string]any)
 		children := make([]map[string]any, 0, len(artists))
@@ -495,9 +489,8 @@ func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string
 	h.writeOK(w, r, map[string]any{
 		"indexes": map[string]any{
 			"@ignoredArticles": "The El La Los Las Le Les",
-			// [兼容性增强] lastModified 改为真实毫秒时间戳，避免部分客户端判为无效数据
-			"@lastModified": strconv.FormatInt(time.Now().UnixMilli(), 10),
-			"index":         groups,
+			"@lastModified":    strconv.FormatInt(time.Now().UnixMilli(), 10),
+			"index":            groups,
 		},
 	})
 }
@@ -552,11 +545,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	})
 }
 
-// [兼容性增强] getMusicDirectory 兼容老 API 的文件夹浏览路径：
-//
-//	根("1")   -> 艺术家目录(ar-xxx)
-//	ar-xxx    -> 该艺术家的专辑(al-xxx)
-//	al-xxx    -> 该专辑的歌曲(song id)
 func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
 	songs := h.visibleSongs(user)
@@ -686,7 +674,6 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 	h.writeOK(w, r, map[string]any{"directory": dir})
 }
 
-// [兼容性增强] 辅助：把属性值统一转 int，用于排序
 func atoiAny(v any) int {
 	switch x := v.(type) {
 	case int:
@@ -1173,7 +1160,18 @@ func contentTypeForFmt(fmtName string) string {
 func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
 	typ := r.URL.Query().Get("type")
-	// [兼容性增强] getIndexes 的 child 会带 coverArt=ar-xxx，这里识别为艺术家封面
+
+	// [兼容性修复] 修复客户端自作主张拼接的重复前缀
+	if strings.HasPrefix(id, "al-al-") {
+		id = strings.TrimPrefix(id, "al-")
+	}
+	if strings.HasPrefix(id, "ar-ar-") {
+		id = strings.TrimPrefix(id, "ar-")
+	}
+	if strings.HasPrefix(id, "pl-pl-") {
+		id = strings.TrimPrefix(id, "pl-")
+	}
+
 	if typ == "" && strings.HasPrefix(id, "ar-") {
 		typ = "artist"
 	}
@@ -1200,13 +1198,27 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			proxyImage(w, d.Pic)
 			return
 		}
-		http.Error(w, "not found", 404)
+
+		songs := h.visibleSongs(user)
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id && s.CoverPath != "" {
+					if size > 0 {
+						h.serveThumb(w, r, s.CoverPath, size)
+					} else {
+						serveLocalCover(w, r, s.CoverPath)
+					}
+					return
+				}
+			}
+		}
+		serveDefaultCover(w)
 		return
 	}
 
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
-		http.Error(w, "not found", 404)
+		serveDefaultCover(w)
 		return
 	}
 	if size > 0 {
@@ -1252,6 +1264,13 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 	return s.CoverPath
 }
 
+func serveDefaultCover(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	pngData := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}
+	w.Write(pngData)
+}
+
 func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
 	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
@@ -1266,7 +1285,7 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "not found", 404)
+		serveDefaultCover(w)
 		return
 	}
 	defer f.Close()
@@ -1297,13 +1316,13 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "not found", 404)
+		serveDefaultCover(w)
 		return
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		http.Error(w, "stat failed", 500)
+		serveDefaultCover(w)
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
@@ -1313,17 +1332,21 @@ func proxyImage(w http.ResponseWriter, url string) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		http.Error(w, "bad url", 400)
+		serveDefaultCover(w)
 		return
 	}
 	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		serveDefaultCover(w)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		serveDefaultCover(w)
+		return
+	}
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
@@ -1336,7 +1359,6 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 	role := h.DB.GetUserRole(user)
 	var out []map[string]any
 	for _, p := range pls {
-		// admin 看全部；user 只看自己的 + 公开的
 		if role != "admin" && p.Owner != user && !p.Public {
 			continue
 		}
@@ -1739,7 +1761,7 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		proxyImage(w, d.Pic)
 		return
 	}
-	http.Error(w, "not found", 404)
+	serveDefaultCover(w)
 }
 
 // ==================== 上报 ====================
@@ -1883,45 +1905,43 @@ func songToMap(s *db.Song) map[string]any {
 	if s.CoverPath == "" {
 		coverArt = aID
 	}
-	var artists []map[string]any
-	for _, name := range splitArtists(s.Artist) {
-		artists = append(artists, map[string]any{
-			"@id":   artistID(name),
-			"@name": name,
-		})
+	
+	// [核心修复] 清理了所有 OpenSubsonic 扩展字段，确保不会干扰棉花音乐等老客户端解析
+	m := map[string]any{
+		"@id":           s.ID,
+		"@parent":       aID,
+		"@isDir":        false,
+		"@title":        s.Title,
+		"@album":        s.Album,
+		"@artist":       s.Artist,
+		"@albumArtist":  s.AlbumArtist,
+		"@year":         s.Year,
+		"@genre":        s.Genre,
+		"@coverArt":     coverArt,
+		"@size":         s.FileSize,
+		"@contentType":  ct,
+		"@suffix":       suffix,
+		"@duration":     s.Dur,
+		"@bitRate":      s.Bitrate,
+		"@path":         s.Path,
+		"@albumId":      aID,
+		"@artistId":     arID,
+		"@type":         "music",
+		"@created":      "2024-01-01T00:00:00.000Z",
+		"@isVideo":      false,
+		"@samplingRate": s.SampleRate,
+		"@channelCount": s.Channels,
+		"@composer":     s.Composer,
+		"@isrc":         s.ISRC,
 	}
-	return map[string]any{
-		"@id":                 s.ID,
-		"@parent":             aID,
-		"@isDir":              false,
-		"@title":              s.Title,
-		"@album":              s.Album,
-		"@artist":             s.Artist,
-		"@albumArtist":        s.AlbumArtist,
-		"@displayArtist":      s.Artist,
-		"@displayAlbumArtist": s.AlbumArtist,
-		"@track":              s.TrackNumber,
-		"@discNumber":         s.DiscNumber,
-		"@year":               s.Year,
-		"@genre":              s.Genre,
-		"@coverArt":           coverArt,
-		"@size":               s.FileSize,
-		"@contentType":        ct,
-		"@suffix":             suffix,
-		"@duration":           s.Dur,
-		"@bitRate":            s.Bitrate,
-		"@path":               s.Path,
-		"@albumId":            aID,
-		"@artistId":           arID,
-		"@type":               "music",
-		"@created":            "2024-01-01T00:00:00.000Z",
-		"@isVideo":            false,
-		"@samplingRate":       s.SampleRate,
-		"@channelCount":       s.Channels,
-		"@composer":           s.Composer,
-		"@isrc":               s.ISRC,
-		"artists":             artists,
+	// [核心修复] 如果为 0，则不要带上 track 和 discNumber 字段，防止客户端计算 index 越界崩溃
+	if s.TrackNumber > 0 {
+		m["@track"] = s.TrackNumber
 	}
+	if s.DiscNumber > 0 {
+		m["@discNumber"] = s.DiscNumber
+	}
+	return m
 }
 
 func artistID(name string) string {
