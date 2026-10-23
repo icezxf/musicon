@@ -115,7 +115,13 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
-	if p != "ping" {
+	// [兼容性增强] 匿名 ping 放行（探测连通性）；带用户名的 ping 必须校验，避免“假连接”
+	if p == "ping" {
+		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
+			h.writeErr(w, r, 40, "Wrong username or password")
+			return
+		}
+	} else {
 		if !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
 			return
@@ -139,6 +145,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtists(w, r, u)
 	case "getArtist":
 		h.getArtist(w, r, u)
+	case "getMusicDirectory": // [兼容性增强] 新增：文件夹视图客户端必经端点
+		h.getMusicDirectory(w, r, u)
 	case "getAlbumList":
 		h.getAlbumList(w, r, u)
 	case "getAlbumList2":
@@ -463,12 +471,33 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 }
 
 func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string) {
-	indexes := h.buildArtistGroups(h.visibleSongs(user))
+	groups := h.buildArtistGroups(h.visibleSongs(user))
+	// [兼容性增强] 每个 index 下同时输出 Directory 类型的 child，
+	// 让只解析 child 的文件夹视图客户端也能看到艺术家。
+	// id 与 artist 相同（ar-xxx），点击后走 getMusicDirectory(ar-xxx)。
+	for _, idx := range groups {
+		artists, _ := idx["artist"].([]map[string]any)
+		children := make([]map[string]any, 0, len(artists))
+		for _, a := range artists {
+			children = append(children, map[string]any{
+				"@id":       a["@id"],
+				"@parent":   "1",
+				"@isDir":    true,
+				"@title":    a["@name"],
+				"@name":     a["@name"],
+				"@artist":   a["@name"],
+				"@coverArt": a["@coverArt"],
+				"@created":  "2024-01-01T00:00:00.000Z",
+			})
+		}
+		idx["child"] = children
+	}
 	h.writeOK(w, r, map[string]any{
 		"indexes": map[string]any{
 			"@ignoredArticles": "The El La Los Las Le Les",
-			"@lastModified":    "0",
-			"index":            indexes,
+			// [兼容性增强] lastModified 改为真实毫秒时间戳，避免部分客户端判为无效数据
+			"@lastModified": strconv.FormatInt(time.Now().UnixMilli(), 10),
+			"index":         groups,
 		},
 	})
 }
@@ -521,6 +550,156 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			"album":       albumList,
 		},
 	})
+}
+
+// [兼容性增强] getMusicDirectory 兼容老 API 的文件夹浏览路径：
+//
+//	根("1")   -> 艺术家目录(ar-xxx)
+//	ar-xxx    -> 该艺术家的专辑(al-xxx)
+//	al-xxx    -> 该专辑的歌曲(song id)
+func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user string) {
+	id := r.URL.Query().Get("id")
+	songs := h.visibleSongs(user)
+
+	dirName := ""
+	parent := "1"
+	var children []map[string]any
+
+	switch {
+	case id == "" || id == "1":
+		seen := map[string]bool{}
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				aid := artistID(n)
+				if seen[aid] {
+					continue
+				}
+				seen[aid] = true
+				children = append(children, map[string]any{
+					"@id":       aid,
+					"@parent":   "1",
+					"@isDir":    true,
+					"@title":    n,
+					"@name":     n,
+					"@artist":   n,
+					"@coverArt": aid,
+					"@created":  "2024-01-01T00:00:00.000Z",
+				})
+			}
+		}
+		dirName = "Music"
+		parent = ""
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "ar-"):
+		type albumAgg struct {
+			name   string
+			artist string
+			count  int
+			dur    int
+		}
+		albums := map[string]*albumAgg{}
+		for _, s := range songs {
+			matched := false
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id {
+					if dirName == "" {
+						dirName = n
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			k := s.Album + "|" + s.Artist
+			if _, ok := albums[k]; !ok {
+				albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
+			}
+			albums[k].count++
+			albums[k].dur += s.Dur
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Artist not found")
+			return
+		}
+		for _, a := range albums {
+			aid := albumID(a.name, a.artist)
+			children = append(children, map[string]any{
+				"@id":        aid,
+				"@parent":    id,
+				"@isDir":     true,
+				"@title":     a.name,
+				"@name":      a.name,
+				"@album":     a.name,
+				"@artist":    a.artist,
+				"@coverArt":  aid,
+				"@songCount": a.count,
+				"@duration":  a.dur,
+				"@created":   "2024-01-01T00:00:00.000Z",
+			})
+		}
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "al-"):
+		for i := range songs {
+			if albumID(songs[i].Album, songs[i].Artist) == id {
+				if dirName == "" {
+					dirName = songs[i].Album
+					parent = artistID(songs[i].Artist)
+				}
+				children = append(children, songToMap(&songs[i]))
+			}
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Album not found")
+			return
+		}
+		sort.Slice(children, func(i, j int) bool {
+			ti := atoiAny(children[i]["@track"])
+			tj := atoiAny(children[j]["@track"])
+			if ti != tj {
+				return ti < tj
+			}
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	default:
+		h.writeErr(w, r, 70, "Directory not found")
+		return
+	}
+
+	dir := map[string]any{
+		"@id":    id,
+		"@name":  dirName,
+		"@isDir": true,
+		"child":  children,
+	}
+	if parent != "" {
+		dir["@parent"] = parent
+	}
+	h.writeOK(w, r, map[string]any{"directory": dir})
+}
+
+// [兼容性增强] 辅助：把属性值统一转 int，用于排序
+func atoiAny(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		n, _ := strconv.Atoi(x)
+		return n
+	}
+	return 0
 }
 
 func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request, user string) {
@@ -994,6 +1173,10 @@ func contentTypeForFmt(fmtName string) string {
 func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
 	typ := r.URL.Query().Get("type")
+	// [兼容性增强] getIndexes 的 child 会带 coverArt=ar-xxx，这里识别为艺术家封面
+	if typ == "" && strings.HasPrefix(id, "ar-") {
+		typ = "artist"
+	}
 	sizeStr := r.URL.Query().Get("size")
 	size := 0
 	if sizeStr != "" {
