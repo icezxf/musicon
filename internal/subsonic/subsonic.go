@@ -408,8 +408,6 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{}
-
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -422,7 +420,6 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
-			artistSongCount[name]++
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -435,11 +432,11 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 				first = c
 			}
 		}
+		// 回归最纯粹的标准，只返回协议规定的字段
 		groups[first] = append(groups[first], map[string]any{
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -510,8 +507,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	}
 	albums := map[string]*albumAgg{}
 	artistName := ""
-	var artistSongs []map[string]any
-
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		matched := false
@@ -525,9 +520,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		if !matched {
 			continue
 		}
-
-		artistSongs = append(artistSongs, songToMap(&s))
-
 		k := s.Album + "|" + s.Artist
 		if _, ok := albums[k]; !ok {
 			albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
@@ -535,26 +527,23 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		albums[k].count++
 		albums[k].dur += s.Dur
 	}
-
 	if artistName == "" {
 		h.writeErr(w, r, 70, "Artist not found")
 		return
 	}
-
 	albumList := make([]map[string]any, 0)
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
-
+	
+	// 严格遵循协议，不返回 song 数组和非标字段
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
 			"@name":       artistName,
 			"@albumCount": len(albumList),
-			"@songCount":  len(artistSongs),
 			"@coverArt":   id,
 			"album":       albumList,
-			"song":        artistSongs,
 		},
 	})
 }
@@ -1815,13 +1804,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 
 	songs := h.visibleSongs(user)
 
-	artistSongCount := map[string]int{}
-	for _, s := range songs {
-		for _, name := range splitArtists(s.Artist) {
-			artistSongCount[name]++
-		}
-	}
-
 	matchedSongs := make([]map[string]any, 0)
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
@@ -1845,11 +1827,11 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 			if !artistSet[name] {
 				artistSet[name] = true
 				if artistCount > 0 || artistCountStr == "" {
+					// 严格遵循协议，不返回非标的 songCount
 					matchedArtists = append(matchedArtists, map[string]any{
 						"@id":         artistID(name),
 						"@name":       name,
 						"@albumCount": 1,
-						"@songCount":  artistSongCount[name],
 					})
 				}
 			}
@@ -1914,13 +1896,10 @@ func (h *Handler) getScanStatus(w http.ResponseWriter, r *http.Request) {
 
 func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
+	// 恢复为最纯粹的 AlbumID3 结构，剔除之前硬塞的 isDir, title, type 等
 	return map[string]any{
 		"@id":          id,
-		"@parent":      artistID(artist),
-		"@isDir":       true,
 		"@name":        name,
-		"@title":       name,
-		"@album":       name,
 		"@artist":      artist,
 		"@artistId":    artistID(artist),
 		"@albumArtist": artist,
@@ -1928,7 +1907,6 @@ func albumToMap(name, artist string, songCount, duration int) map[string]any {
 		"@songCount":   songCount,
 		"@duration":    duration,
 		"@created":     "2024-01-01T00:00:00.000Z",
-		"@type":        "music",
 	}
 }
 
