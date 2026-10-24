@@ -448,12 +448,11 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 				first = c
 			}
 		}
-		// ArtistID3 标准结构
 		groups[first] = append(groups[first], map[string]any{
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist],
+			"@songCount":  artistSongCount[artist], // ArtistID3 标准字段
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -535,8 +534,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
-	
-	// 严格标准，不返回 song 数组，但返回标准的 ArtistID3 字段
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
@@ -915,7 +912,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	
-	// [修复] 对 URL 进行转义，防止空格和中文导致客户端无法跳转
+	// 【核心容错】对 URL 进行转义，防止空格和中文导致客户端解析失败
 	if u, err := url.Parse(rawURL); err == nil {
 		rawURL = u.String()
 		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
@@ -925,7 +922,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
-	// [维持不变] 302 跳转
+	// 维持标准 302 跳转
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
@@ -1031,7 +1028,30 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	if typ == "artist" || strings.HasPrefix(id, "ar-") {
+	// 1. 剥离客户端自作主张拼接的重复前缀
+	if strings.HasPrefix(id, "al-al-") {
+		id = strings.TrimPrefix(id, "al-")
+	}
+	if strings.HasPrefix(id, "ar-ar-") {
+		id = strings.TrimPrefix(id, "ar-")
+	}
+	if strings.HasPrefix(id, "pl-pl-") {
+		id = strings.TrimPrefix(id, "pl-")
+	}
+
+	// 2. 智能推断 type（棉花音乐有时会漏传 type 参数）
+	if typ == "" {
+		if strings.HasPrefix(id, "ar-") {
+			typ = "artist"
+		} else if strings.HasPrefix(id, "al-") {
+			typ = "album"
+		} else if strings.HasPrefix(id, "pl-") {
+			typ = "playlist"
+		}
+	}
+
+	// 3. 处理歌手封面
+	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
 			name = h.resolveArtistName(id, user)
@@ -1047,7 +1067,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			return
 		}
 		
-		// 找该歌手任意一首有封面的歌作为回退
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
 			for _, n := range splitArtists(s.Artist) {
@@ -1061,16 +1080,17 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 				}
 			}
 		}
-		// 终极兜底
 		serveDefaultCover(w)
 		return
 	}
 
+	// 4. 处理歌曲/专辑/歌单封面
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
 		serveDefaultCover(w)
 		return
 	}
+	
 	if size > 0 {
 		h.serveThumb(w, r, coverPath, size)
 		return
@@ -1081,13 +1101,13 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
-	// 查找 ID 对应的歌曲
+	// 匹配歌曲 ID
 	for _, s := range songs {
 		if s.ID == id {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
-			// 如果该歌曲没封面，找同一张专辑里有封面的歌
+			// 回退：找同一张专辑里有封面的歌
 			for _, s2 := range songs {
 				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
 					return s2.CoverPath
@@ -1097,17 +1117,14 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 		}
 	}
 
-	// 处理专辑
-	if typ == "album" || strings.HasPrefix(id, "al-") {
-		for _, s := range songs {
-			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
-				return s.CoverPath
-			}
+	// 匹配专辑 ID（不管 type 传没传，只要 id 能对上专辑就返回）
+	for _, s := range songs {
+		if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
+			return s.CoverPath
 		}
-		return ""
 	}
 
-	// 处理歌单
+	// 匹配歌单 ID
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
 		realID := strings.TrimPrefix(id, "pl-")
 		plSongs, _ := h.DB.GetPlaylistSongs(realID)
@@ -1122,7 +1139,6 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 	return ""
 }
 
-// [标准透明兜底]
 func serveDefaultCover(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
@@ -1138,27 +1154,37 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 		base = base[i+1:]
 	}
 	thumbPath := fmt.Sprintf("%s/%s_%d.jpg", thumbDir, base, size)
+	
+	// 如果缓存存在，且文件正常（大于 0 字节），直接返回
 	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
 		http.ServeFile(w, r, thumbPath)
 		return
 	}
+	
 	f, err := os.Open(path)
 	if err != nil {
 		serveDefaultCover(w)
 		return
 	}
 	defer f.Close()
+	
+	// 尝试解码内嵌图
 	img, _, err := image.Decode(f)
 	if err != nil {
+		// 【核心容错】如果解码失败（格式不标准），绝不返回 404，直接把原文件塞给客户端！
 		serveLocalCover(w, r, path)
 		return
 	}
+	
+	// 生成缩略图
 	thumb := imaging.Fill(img, size, size, imaging.Center, imaging.Lanczos)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(85)); err != nil {
+		// 如果保存缓存失败，直接在内存中编码并返回给客户端，绝不留白
 		w.Header().Set("Content-Type", "image/jpeg")
 		imaging.Encode(w, thumb, imaging.JPEG, imaging.JPEGQuality(85))
 		return
 	}
+	
 	http.ServeFile(w, r, thumbPath)
 }
 
@@ -1513,7 +1539,6 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 		jsonLines = append(jsonLines, m)
 	}
 	
-	// OpenSubsonic 标准歌词结构
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
