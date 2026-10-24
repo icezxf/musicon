@@ -408,7 +408,7 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{} // [新增] 记录每个歌手的歌曲总数
+	artistSongCount := map[string]int{}
 
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
@@ -422,7 +422,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
-			artistSongCount[name]++ // [新增] 累加歌曲数
+			artistSongCount[name]++
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -439,7 +439,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist], // [新增] 返回给客户端
+			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -493,7 +493,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	}
 	albums := map[string]*albumAgg{}
 	artistName := ""
-	var artistSongs []map[string]any // [新增] 收集该歌手的所有歌曲
+	var artistSongs []map[string]any
 
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
@@ -509,7 +509,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			continue
 		}
 		
-		artistSongs = append(artistSongs, songToMap(&s)) // [新增] 把匹配到的歌曲存入列表
+		artistSongs = append(artistSongs, songToMap(&s))
 
 		k := s.Album + "|" + s.Artist
 		if _, ok := albums[k]; !ok {
@@ -534,10 +534,10 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			"@id":         id,
 			"@name":       artistName,
 			"@albumCount": len(albumList),
-			"@songCount":  len(artistSongs), // [新增] 总歌曲数
+			"@songCount":  len(artistSongs),
 			"@coverArt":   id,
 			"album":       albumList,
-			"song":        artistSongs,      // [新增] 直接把所有歌曲明细给它
+			"song":        artistSongs,
 		},
 	})
 }
@@ -1704,7 +1704,6 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	base := scheme + "://" + host
 	var imgURL string
 	
-	// [核心修复] 如果拿到了网图，走 getArtistImage；否则强行走 getCoverArt 本地兜底
 	if hasPic {
 		imgURL = base + "/rest/getArtistImage?id=" + id
 	} else {
@@ -1814,6 +1813,15 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	albumCount, _ := strconv.Atoi(albumCountStr)
 
 	songs := h.visibleSongs(user)
+	
+	// [核心修复] 先统计每个歌手的真实歌曲数
+	artistSongCount := map[string]int{}
+	for _, s := range songs {
+		for _, name := range splitArtists(s.Artist) {
+			artistSongCount[name]++
+		}
+	}
+
 	matchedSongs := make([]map[string]any, 0)
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
@@ -1839,11 +1847,15 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 				artistSet[name] = true
 				if artistCount > 0 || artistCountStr == "" {
 					matchedArtists = append(matchedArtists, map[string]any{
-						"@id": artistID(name), "@name": name, "@albumCount": 1,
+						"@id":         artistID(name), 
+						"@name":       name, 
+						"@albumCount": 1,
+						"@songCount":  artistSongCount[name], // [核心修复] 强行塞入歌曲数
 					})
 				}
 			}
 		}
+		
 		ak := s.Album + "|" + s.Artist
 		if !albumSet[ak] && s.Album != "" {
 			albumSet[ak] = true
