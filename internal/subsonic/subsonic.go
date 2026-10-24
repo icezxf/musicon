@@ -53,6 +53,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 
 // ==================== 权限辅助 ====================
 
+// visibleSongs 返回该用户能看到的歌曲（admin 全量）
 func (h *Handler) visibleSongs(username string) []db.Song {
 	songs, _ := h.DB.ListSongs()
 	role := h.DB.GetUserRole(username)
@@ -66,6 +67,7 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 	}
 	out := make([]db.Song, 0, len(songs))
 	for _, s := range songs {
+		// 在线歌（source_id 为空）所有登录用户可见
 		if s.SourceID == "" || set[s.SourceID] {
 			out = append(out, s)
 		}
@@ -108,27 +110,12 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// OpenSubsonic formPost 扩展：支持 POST 表单参数
-	if r.Method == http.MethodPost {
-		r.ParseForm()
-		for k, v := range r.PostForm {
-			if len(v) > 0 {
-				r.URL.Query().Set(k, v[0])
-			}
-		}
-	}
-
 	p := strings.TrimPrefix(r.URL.Path, "/rest/")
 	p = strings.TrimSuffix(p, ".view")
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
-	if p == "ping" {
-		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
-			h.writeErr(w, r, 40, "Wrong username or password")
-			return
-		}
-	} else {
+	if p != "ping" {
 		if !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
 			return
@@ -143,14 +130,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case "getLicense":
 		h.writeOK(w, r, map[string]any{"license": map[string]any{"@valid": true}})
 	case "getOpenSubsonicExtensions":
-		// 声明实现的 OpenSubsonic 扩展
-		h.writeOK(w, r, map[string]any{
-			"openSubsonicExtensions": []map[string]any{
-				{"name": "formPost", "versions": []int{1}},
-				{"name": "transcodeOffset", "versions": []int{1}},
-				{"name": "songLyrics", "versions": []int{1}},
-			},
-		})
+		h.writeOK(w, r, map[string]any{"openSubsonicExtensions": []any{}})
 	case "getMusicFolders":
 		h.getMusicFolders(w, r)
 	case "getIndexes":
@@ -159,8 +139,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtists(w, r, u)
 	case "getArtist":
 		h.getArtist(w, r, u)
-	case "getMusicDirectory":
-		h.getMusicDirectory(w, r, u)
 	case "getAlbumList":
 		h.getAlbumList(w, r, u)
 	case "getAlbumList2":
@@ -395,7 +373,7 @@ func splitArtists(s string) []string {
 		return nil
 	}
 	parts := splitArtistRe.Split(s, -1)
-	out := make([]string, 0)
+	var out []string
 	seen := map[string]bool{}
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -425,7 +403,6 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -438,7 +415,6 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
-			artistSongCount[name]++
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -455,7 +431,6 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -464,7 +439,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	indexes := make([]map[string]any, 0)
+	var indexes []map[string]any
 	for _, k := range keys {
 		sort.Slice(groups[k], func(i, j int) bool {
 			return groups[k][i]["@name"].(string) < groups[k][j]["@name"].(string)
@@ -488,12 +463,12 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 }
 
 func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string) {
-	groups := h.buildArtistGroups(h.visibleSongs(user))
+	indexes := h.buildArtistGroups(h.visibleSongs(user))
 	h.writeOK(w, r, map[string]any{
 		"indexes": map[string]any{
 			"@ignoredArticles": "The El La Los Las Le Les",
-			"@lastModified":    strconv.FormatInt(time.Now().UnixMilli(), 10),
-			"index":            groups,
+			"@lastModified":    "0",
+			"index":            indexes,
 		},
 	})
 }
@@ -533,7 +508,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		h.writeErr(w, r, 70, "Artist not found")
 		return
 	}
-	albumList := make([]map[string]any, 0)
+	var albumList []map[string]any
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
@@ -546,150 +521,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			"album":       albumList,
 		},
 	})
-}
-
-func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user string) {
-	id := r.URL.Query().Get("id")
-	songs := h.visibleSongs(user)
-
-	dirName := ""
-	parent := "1"
-	children := make([]map[string]any, 0)
-
-	switch {
-	case id == "" || id == "1":
-		seen := map[string]bool{}
-		for _, s := range songs {
-			for _, n := range splitArtists(s.Artist) {
-				aid := artistID(n)
-				if seen[aid] {
-					continue
-				}
-				seen[aid] = true
-				children = append(children, map[string]any{
-					"@id":       aid,
-					"@parent":   "1",
-					"@isDir":    true,
-					"@title":    n,
-					"@name":     n,
-					"@artist":   n,
-					"@coverArt": aid,
-					"@created":  "2024-01-01T00:00:00.000Z",
-				})
-			}
-		}
-		dirName = "Music"
-		parent = ""
-		sort.Slice(children, func(i, j int) bool {
-			return children[i]["@title"].(string) < children[j]["@title"].(string)
-		})
-
-	case strings.HasPrefix(id, "ar-"):
-		type albumAgg struct {
-			name   string
-			artist string
-			count  int
-			dur    int
-		}
-		albums := map[string]*albumAgg{}
-		for _, s := range songs {
-			matched := false
-			for _, n := range splitArtists(s.Artist) {
-				if artistID(n) == id {
-					if dirName == "" {
-						dirName = n
-					}
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
-			k := s.Album + "|" + s.Artist
-			if _, ok := albums[k]; !ok {
-				albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
-			}
-			albums[k].count++
-			albums[k].dur += s.Dur
-		}
-		if dirName == "" {
-			h.writeErr(w, r, 70, "Artist not found")
-			return
-		}
-		for _, a := range albums {
-			aid := albumID(a.name, a.artist)
-			children = append(children, map[string]any{
-				"@id":        aid,
-				"@parent":    id,
-				"@isDir":     true,
-				"@title":     a.name,
-				"@name":      a.name,
-				"@album":     a.name,
-				"@artist":    a.artist,
-				"@coverArt":  aid,
-				"@songCount": a.count,
-				"@duration":  a.dur,
-				"@created":   "2024-01-01T00:00:00.000Z",
-			})
-		}
-		sort.Slice(children, func(i, j int) bool {
-			return children[i]["@title"].(string) < children[j]["@title"].(string)
-		})
-
-	case strings.HasPrefix(id, "al-"):
-		for i := range songs {
-			if albumID(songs[i].Album, songs[i].Artist) == id {
-				if dirName == "" {
-					dirName = songs[i].Album
-					parent = artistID(songs[i].Artist)
-				}
-				children = append(children, songToMap(&songs[i]))
-			}
-		}
-		if dirName == "" {
-			h.writeErr(w, r, 70, "Album not found")
-			return
-		}
-		sort.Slice(children, func(i, j int) bool {
-			ti := atoiAny(children[i]["@track"])
-			tj := atoiAny(children[j]["@track"])
-			if ti != tj {
-				return ti < tj
-			}
-			return children[i]["@title"].(string) < children[j]["@title"].(string)
-		})
-
-	default:
-		h.writeErr(w, r, 70, "Directory not found")
-		return
-	}
-
-	dir := map[string]any{
-		"@id":    id,
-		"@name":  dirName,
-		"@isDir": true,
-		"child":  children,
-	}
-	if parent != "" {
-		dir["@parent"] = parent
-	}
-	h.writeOK(w, r, map[string]any{"directory": dir})
-}
-
-func atoiAny(v any) int {
-	switch x := v.(type) {
-	case int:
-		return x
-	case int64:
-		return int(x)
-	case float64:
-		return int(x)
-	case string:
-		n, _ := strconv.Atoi(x)
-		return n
-	}
-	return 0
 }
 
 func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request, user string) {
@@ -712,7 +543,7 @@ func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request, user stri
 		albums[k].count++
 		albums[k].dur += s.Dur
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for _, a := range albums {
 		id := albumID(a.name, a.artist)
 		out = append(out, map[string]any{
@@ -767,7 +598,7 @@ func (h *Handler) getAlbumList2(w http.ResponseWriter, r *http.Request, user str
 		albums[k].count++
 		albums[k].dur += s.Dur
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for _, a := range albums {
 		out = append(out, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
@@ -829,7 +660,7 @@ func (h *Handler) getAlbum(w http.ResponseWriter, r *http.Request, user string) 
 		h.writeErr(w, r, 70, "Album not found")
 		return
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for i := range albumSongs {
 		out = append(out, songToMap(&albumSongs[i]))
 	}
@@ -885,7 +716,7 @@ func (h *Handler) getRandomSongs(w http.ResponseWriter, r *http.Request, user st
 	if len(songs) > size {
 		songs = songs[:size]
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for i := range songs {
 		out = append(out, songToMap(&songs[i]))
 	}
@@ -924,7 +755,7 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request, user strin
 	if len(filtered) > count {
 		filtered = filtered[:count]
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for i := range filtered {
 		out = append(out, songToMap(&filtered[i]))
 	}
@@ -944,7 +775,7 @@ func (h *Handler) getSimilarSongs(w http.ResponseWriter, r *http.Request, user s
 		}
 	}
 	seen := map[string]bool{id: true}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	if base != nil {
 		for i := range songs {
 			s := &songs[i]
@@ -988,7 +819,7 @@ func (h *Handler) getGenres(w http.ResponseWriter, r *http.Request, user string)
 			gm[s.Genre]++
 		}
 	}
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for g, n := range gm {
 		out = append(out, map[string]any{
 			"@songCount":  n,
@@ -1004,7 +835,7 @@ func (h *Handler) getGenres(w http.ResponseWriter, r *http.Request, user string)
 	})
 }
 
-// ==================== 播放 (支持 transcodeOffset) ====================
+// ==================== 播放 ====================
 
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
@@ -1016,13 +847,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 	if !h.DB.UserCanSeeSong(user, s.ID) {
 		h.writeErr(w, r, 50, "无权访问")
 		return
-	}
-
-	// OpenSubsonic transcodeOffset 扩展：支持 timeOffset 参数
-	timeOffsetStr := r.URL.Query().Get("timeOffset")
-	var timeOffset int
-	if timeOffsetStr != "" {
-		timeOffset, _ = strconv.Atoi(timeOffsetStr)
 	}
 
 	if r.Method == http.MethodHead {
@@ -1065,11 +889,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
-
-	// 如果有 timeOffset 且底层支持，可以在此拼接参数或交由客户端处理
-	// 对于直接代理到 AList 的场景，AList 可能支持类似参数，或客户端自行 seek
-	_ = timeOffset
-
 	if u, err := url.Parse(rawURL); err == nil {
 		log.Printf("[stream] %s user=%s %s -> 302 %s%s", r.Method, user, id, u.Host, u.Path)
 	} else {
@@ -1175,20 +994,6 @@ func contentTypeForFmt(fmtName string) string {
 func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
 	typ := r.URL.Query().Get("type")
-
-	if strings.HasPrefix(id, "al-al-") {
-		id = strings.TrimPrefix(id, "al-")
-	}
-	if strings.HasPrefix(id, "ar-ar-") {
-		id = strings.TrimPrefix(id, "ar-")
-	}
-	if strings.HasPrefix(id, "pl-pl-") {
-		id = strings.TrimPrefix(id, "pl-")
-	}
-
-	if typ == "" && strings.HasPrefix(id, "ar-") {
-		typ = "artist"
-	}
 	sizeStr := r.URL.Query().Get("size")
 	size := 0
 	if sizeStr != "" {
@@ -1212,27 +1017,13 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			proxyImage(w, d.Pic)
 			return
 		}
-
-		songs := h.visibleSongs(user)
-		for _, s := range songs {
-			for _, n := range splitArtists(s.Artist) {
-				if artistID(n) == id && s.CoverPath != "" {
-					if size > 0 {
-						h.serveThumb(w, r, s.CoverPath, size)
-					} else {
-						serveLocalCover(w, r, s.CoverPath)
-					}
-					return
-				}
-			}
-		}
-		serveDefaultCover(w)
+		http.Error(w, "not found", 404)
 		return
 	}
 
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
-		serveDefaultCover(w)
+		http.Error(w, "not found", 404)
 		return
 	}
 	if size > 0 {
@@ -1278,13 +1069,6 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 	return s.CoverPath
 }
 
-func serveDefaultCover(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	pngData := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}
-	w.Write(pngData)
-}
-
 func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
 	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
@@ -1299,7 +1083,7 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		serveDefaultCover(w)
+		http.Error(w, "not found", 404)
 		return
 	}
 	defer f.Close()
@@ -1330,37 +1114,33 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		serveDefaultCover(w)
+		http.Error(w, "not found", 404)
 		return
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		serveDefaultCover(w)
+		http.Error(w, "stat failed", 500)
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
-func proxyImage(w http.ResponseWriter, imageURL string) {
+func proxyImage(w http.ResponseWriter, url string) {
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("GET", imageURL, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		serveDefaultCover(w)
+		http.Error(w, "bad url", 400)
 		return
 	}
 	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
-		serveDefaultCover(w)
+		http.Error(w, err.Error(), 502)
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		serveDefaultCover(w)
-		return
-	}
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
@@ -1371,8 +1151,9 @@ func proxyImage(w http.ResponseWriter, imageURL string) {
 func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user string) {
 	pls, _ := h.DB.ListPlaylists()
 	role := h.DB.GetUserRole(user)
-	out := make([]map[string]any, 0)
+	var out []map[string]any
 	for _, p := range pls {
+		// admin 看全部；user 只看自己的 + 公开的
 		if role != "admin" && p.Owner != user && !p.Public {
 			continue
 		}
@@ -1404,7 +1185,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 	songs, _ := h.DB.GetPlaylistSongs(id)
-	entries := make([]map[string]any, 0)
+	var entries []map[string]any
 	totalDur := 0
 	for i := range songs {
 		entries = append(entries, songToMap(&songs[i]))
@@ -1582,7 +1363,7 @@ func (h *Handler) deletePlaylist(w http.ResponseWriter, r *http.Request, user st
 	h.writeOK(w, r, map[string]any{})
 }
 
-// ==================== 歌词 (songLyrics 扩展) ====================
+// ==================== 歌词 ====================
 
 func (h *Handler) getLyricsLegacy(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
@@ -1645,7 +1426,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 			break
 		}
 	}
-	jsonLines := make([]map[string]any, 0)
+	var jsonLines []map[string]any
 	for _, ln := range lines {
 		m := map[string]any{"@value": ln.Value}
 		if hasTimestamp && ln.Start >= 0 {
@@ -1705,20 +1486,16 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	}
 
 	base := scheme + "://" + host
-	var imgURL string
-
+	small := ""
 	if hasPic {
-		imgURL = base + "/rest/getArtistImage?id=" + id
-	} else {
-		imgURL = base + "/rest/getCoverArt?id=" + id
+		small = base + "/rest/getArtistImage?id=" + id
 	}
-
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
 			"biography":      bio,
-			"smallImageUrl":  imgURL,
-			"mediumImageUrl": imgURL,
-			"largeImageUrl":  imgURL,
+			"smallImageUrl":  small,
+			"mediumImageUrl": small,
+			"largeImageUrl":  small,
 			"similarArtist":  []any{},
 		},
 	})
@@ -1779,7 +1556,7 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		proxyImage(w, d.Pic)
 		return
 	}
-	serveDefaultCover(w)
+	http.Error(w, "not found", 404)
 }
 
 // ==================== 上报 ====================
@@ -1801,34 +1578,17 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		q = r.URL.Query().Get("any")
 	}
 	ql := strings.ToLower(q)
-
-	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
-
-	songCountStr := r.URL.Query().Get("songCount")
-	songOffsetStr := r.URL.Query().Get("songOffset")
-	artistCountStr := r.URL.Query().Get("artistCount")
-	albumCountStr := r.URL.Query().Get("albumCount")
-
-	songCount, _ := strconv.Atoi(songCountStr)
-	songOffset, _ := strconv.Atoi(songOffsetStr)
-	artistCount, _ := strconv.Atoi(artistCountStr)
-	albumCount, _ := strconv.Atoi(albumCountStr)
-
+	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
+	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
+	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
+	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
+	all := ql == "" || ql == "*"
 	songs := h.visibleSongs(user)
-
-	artistSongCount := map[string]int{}
-	for _, s := range songs {
-		for _, name := range splitArtists(s.Artist) {
-			artistSongCount[name]++
-		}
-	}
-
-	matchedSongs := make([]map[string]any, 0)
+	var matchedSongs []map[string]any
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
-	matchedArtists := make([]map[string]any, 0)
-	matchedAlbums := make([]map[string]any, 0)
-
+	var matchedArtists []map[string]any
+	var matchedAlbums []map[string]any
 	for i := range songs {
 		s := &songs[i]
 		if !all {
@@ -1837,51 +1597,35 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 				continue
 			}
 		}
-
-		if songCount > 0 || songCountStr == "" {
-			matchedSongs = append(matchedSongs, songToMap(s))
-		}
-
+		matchedSongs = append(matchedSongs, songToMap(s))
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
-				if artistCount > 0 || artistCountStr == "" {
-					matchedArtists = append(matchedArtists, map[string]any{
-						"@id":         artistID(name),
-						"@name":       name,
-						"@albumCount": 1,
-						"@songCount":  artistSongCount[name],
-					})
-				}
+				matchedArtists = append(matchedArtists, map[string]any{
+					"@id": artistID(name), "@name": name, "@albumCount": 1,
+				})
 			}
 		}
-
 		ak := s.Album + "|" + s.Artist
 		if !albumSet[ak] && s.Album != "" {
 			albumSet[ak] = true
-			if albumCount > 0 || albumCountStr == "" {
-				matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
-			}
+			matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
 		}
 	}
-
 	if songOffset > 0 && songOffset < len(matchedSongs) {
 		matchedSongs = matchedSongs[songOffset:]
 	} else if songOffset >= len(matchedSongs) {
-		matchedSongs = make([]map[string]any, 0)
+		matchedSongs = nil
 	}
 	if songCount > 0 && len(matchedSongs) > songCount {
 		matchedSongs = matchedSongs[:songCount]
 	}
-
 	if artistCount > 0 && len(matchedArtists) > artistCount {
 		matchedArtists = matchedArtists[:artistCount]
 	}
-
 	if albumCount > 0 && len(matchedAlbums) > albumCount {
 		matchedAlbums = matchedAlbums[:albumCount]
 	}
-
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
 			"artist": matchedArtists,
@@ -1911,11 +1655,10 @@ func (h *Handler) getScanStatus(w http.ResponseWriter, r *http.Request) {
 	h.writeOK(w, r, map[string]any{"scanStatus": map[string]any{"@scanning": false, "@count": 0}})
 }
 
-// ==================== 辅助 (OpenSubsonic 数据模型) ====================
+// ==================== 辅助 ====================
 
 func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
-	// 严格遵循 OpenSubsonic AlbumID3 结构
 	return map[string]any{
 		"@id":          id,
 		"@name":        name,
@@ -1926,15 +1669,6 @@ func albumToMap(name, artist string, songCount, duration int) map[string]any {
 		"@songCount":   songCount,
 		"@duration":    duration,
 		"@created":     "2024-01-01T00:00:00.000Z",
-		// OpenSubsonic 扩展字段 (按需填充)
-		"@played":      false,
-		"@userRating":  0,
-		"@genres":      []any{},
-		"@artists":     []any{},
-		"@displayArtist": artist,
-		"@releaseTypes":  []any{},
-		"@moods":         []any{},
-		"@isCompilation": false,
 	}
 }
 
@@ -1966,64 +1700,44 @@ func songToMap(s *db.Song) map[string]any {
 	if s.CoverPath == "" {
 		coverArt = aID
 	}
-
-	track := s.TrackNumber
-	if track == 0 {
-		track = 1
+	var artists []map[string]any
+	for _, name := range splitArtists(s.Artist) {
+		artists = append(artists, map[string]any{
+			"@id":   artistID(name),
+			"@name": name,
+		})
 	}
-	disc := s.DiscNumber
-	if disc == 0 {
-		disc = 1
-	}
-
-	// 严格遵循 OpenSubsonic Child 结构
 	return map[string]any{
-		"@id":          s.ID,
-		"@parent":      aID,
-		"@isDir":       false,
-		"@title":       s.Title,
-		"@album":       s.Album,
-		"@artist":      s.Artist,
-		"@albumArtist": s.AlbumArtist,
-		"@track":       track,
-		"@discNumber":  disc,
-		"@year":        s.Year,
-		"@genre":       s.Genre,
-		"@coverArt":    coverArt,
-		"@size":        s.FileSize,
-		"@contentType": ct,
-		"@suffix":      suffix,
-		"@duration":    s.Dur,
-		"@bitRate":     s.Bitrate,
-		"@path":        s.Path,
-		"@albumId":     aID,
-		"@artistId":    arID,
-		"@type":        "music",
-		"@created":     "2024-01-01T00:00:00.000Z",
-		"@isVideo":     false,
-		// OpenSubsonic 扩展字段 (按需填充)
-		"@played":         false,
-		"@bpm":            0,
-		"@comment":        "",
-		"@sortName":       s.Title,
-		"@mediaType":      "song",
-		"@musicBrainzId":  "",
-		"@genres":         []any{},
-		"@artists":        []any{},
-		"@displayArtist":  s.Artist,
-		"@albumArtists":   []any{},
+		"@id":                 s.ID,
+		"@parent":             aID,
+		"@isDir":              false,
+		"@title":              s.Title,
+		"@album":              s.Album,
+		"@artist":             s.Artist,
+		"@albumArtist":        s.AlbumArtist,
+		"@displayArtist":      s.Artist,
 		"@displayAlbumArtist": s.AlbumArtist,
-		"@contributors":   []any{},
-		"@displayComposer": "",
-		"@moods":          []any{},
-		"@replayGain": map[string]any{
-			"trackGain": 0.0,
-			"albumGain": 0.0,
-		},
-		"@bitDepth":     0,
-		"@samplingRate": s.SampleRate,
-		"@channelCount": s.Channels,
-		"@explicitStatus": "",
+		"@track":              s.TrackNumber,
+		"@discNumber":         s.DiscNumber,
+		"@year":               s.Year,
+		"@genre":              s.Genre,
+		"@coverArt":           coverArt,
+		"@size":               s.FileSize,
+		"@contentType":        ct,
+		"@suffix":             suffix,
+		"@duration":           s.Dur,
+		"@bitRate":            s.Bitrate,
+		"@path":               s.Path,
+		"@albumId":            aID,
+		"@artistId":           arID,
+		"@type":               "music",
+		"@created":            "2024-01-01T00:00:00.000Z",
+		"@isVideo":            false,
+		"@samplingRate":       s.SampleRate,
+		"@channelCount":       s.Channels,
+		"@composer":           s.Composer,
+		"@isrc":               s.ISRC,
+		"artists":             artists,
 	}
 }
 
