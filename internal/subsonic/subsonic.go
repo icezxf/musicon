@@ -347,7 +347,7 @@ func writeXML(b *strings.Builder, name string, v any) {
 		b.WriteString("<" + name + ">" + escapeXML(x) + "</" + name + ">")
 	case bool:
 		b.WriteString("<" + name + ">" + fmt.Sprintf("%v", x) + "</" + name + ">")
-	case int, int64, float64:
+	case int, int32, int64, float64:
 		b.WriteString("<" + name + ">" + fmt.Sprintf("%v", x) + "</" + name + ">")
 	case nil:
 		b.WriteString("<" + name + "/>")
@@ -358,7 +358,7 @@ func writeXML(b *strings.Builder, name string, v any) {
 
 func isPrimitive(v any) bool {
 	switch v.(type) {
-	case string, int, int64, float64, bool:
+	case string, int, int32, int64, float64, bool:
 		return true
 	}
 	return false
@@ -438,8 +438,8 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 		groups[first] = append(groups[first], map[string]any{
 			"@id":         artistID(artist),
 			"@name":       artist,
-			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist],
+			"@albumCount": int32(len(albums)),
+			"@songCount":  int32(artistSongCount[artist]),
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -533,8 +533,8 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		"artist": map[string]any{
 			"@id":         id,
 			"@name":       artistName,
-			"@albumCount": len(albumList),
-			"@songCount":  len(artistSongs),
+			"@albumCount": int32(len(albumList)),
+			"@songCount":  int32(len(artistSongs)),
 			"@coverArt":   id,
 			"album":       albumList,
 			"song":        artistSongs,
@@ -622,8 +622,8 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 				"@album":     a.name,
 				"@artist":    a.artist,
 				"@coverArt":  aid,
-				"@songCount": a.count,
-				"@duration":  a.dur,
+				"@songCount": int32(a.count),
+				"@duration":  int32(a.dur),
 				"@created":   "2024-01-01T00:00:00.000Z",
 			})
 		}
@@ -675,6 +675,8 @@ func atoiAny(v any) int {
 	switch x := v.(type) {
 	case int:
 		return x
+	case int32:
+		return int(x)
 	case int64:
 		return int(x)
 	case float64:
@@ -763,22 +765,7 @@ func (h *Handler) getAlbumList2(w http.ResponseWriter, r *http.Request, user str
 	}
 	out := make([]map[string]any, 0)
 	for _, a := range albums {
-		id := albumID(a.name, a.artist)
-		out = append(out, map[string]any{
-			"@id":          id,
-			"@parent":      artistID(a.artist),
-			"@isDir":       true,
-			"@title":       a.name,
-			"@name":        a.name,
-			"@album":       a.name,
-			"@artist":      a.artist,
-			"@artistId":    artistID(a.artist),
-			"@albumArtist": a.artist,
-			"@coverArt":    id,
-			"@songCount":   a.count,
-			"@duration":    a.dur,
-			"@created":     "2024-01-01T00:00:00.000Z",
-		})
+		out = append(out, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
 	t := strings.ToLower(r.URL.Query().Get("type"))
 	switch t {
@@ -850,8 +837,8 @@ func (h *Handler) getAlbum(w http.ResponseWriter, r *http.Request, user string) 
 			"@artistId":    artistID(artistName),
 			"@albumArtist": artistName,
 			"@coverArt":    id,
-			"@songCount":   len(out),
-			"@duration":    totalDur,
+			"@songCount":   int32(len(out)),
+			"@duration":    int32(totalDur),
 			"@created":     "2024-01-01T00:00:00.000Z",
 			"song":         out,
 		},
@@ -1000,8 +987,8 @@ func (h *Handler) getGenres(w http.ResponseWriter, r *http.Request, user string)
 	out := make([]map[string]any, 0)
 	for g, n := range gm {
 		out = append(out, map[string]any{
-			"@songCount":  n,
-			"@albumCount": 0,
+			"@songCount":  int32(n),
+			"@albumCount": int32(0),
 			"#text":       g,
 		})
 	}
@@ -1378,8 +1365,8 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			"@name":      p.Name,
 			"@owner":     p.Owner,
 			"@public":    p.Public,
-			"@songCount": p.Count,
-			"@duration":  p.Duration,
+			"@songCount": int32(p.Count),
+			"@duration":  int32(p.Duration),
 			"@coverArt":  p.ID,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
@@ -1413,8 +1400,8 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 			"@name":      p.Name,
 			"@owner":     p.Owner,
 			"@public":    p.Public,
-			"@songCount": len(entries),
-			"@duration":  totalDur,
+			"@songCount": int32(len(entries)),
+			"@duration":  int32(totalDur),
 			"@coverArt":  p.ID,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
@@ -1457,8 +1444,8 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request, user st
 			"@name":      p.Name,
 			"@owner":     p.Owner,
 			"@public":    p.Public,
-			"@songCount": len(songs),
-			"@duration":  totalDur,
+			"@songCount": int32(len(songs)),
+			"@duration":  int32(totalDur),
 			"@coverArt":  p.ID,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
@@ -1493,8 +1480,8 @@ func (h *Handler) createPlaylist(w http.ResponseWriter, r *http.Request, user st
 		"@name":      p.Name,
 		"@owner":     p.Owner,
 		"@public":    p.Public,
-		"@songCount": len(songs),
-		"@duration":  totalDur,
+		"@songCount": int32(len(songs)),
+		"@duration":  int32(totalDur),
 		"@coverArt":  p.ID,
 		"@created":   "2024-01-01T00:00:00.000Z",
 		"@changed":   "2024-01-01T00:00:00.000Z",
@@ -1814,7 +1801,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 
 	songs := h.visibleSongs(user)
 	
-	// [核心修复] 先统计每个歌手的真实歌曲数
 	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
@@ -1837,7 +1823,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 			}
 		}
 		
-		// 当客户端明确传了 0 时，表示不需要该类型数据，不填充
 		if songCount > 0 || songCountStr == "" {
 			matchedSongs = append(matchedSongs, songToMap(s))
 		}
@@ -1849,8 +1834,8 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 					matchedArtists = append(matchedArtists, map[string]any{
 						"@id":         artistID(name), 
 						"@name":       name, 
-						"@albumCount": 1,
-						"@songCount":  artistSongCount[name], // [核心修复] 强行塞入歌曲数
+						"@albumCount": int32(1),
+						"@songCount":  int32(artistSongCount[name]),
 					})
 				}
 			}
@@ -1904,11 +1889,11 @@ func (h *Handler) getScanStatus(w http.ResponseWriter, r *http.Request) {
 			count = n
 		}
 		h.writeOK(w, r, map[string]any{
-			"scanStatus": map[string]any{"@scanning": scanning, "@count": count},
+			"scanStatus": map[string]any{"@scanning": scanning, "@count": int32(count)},
 		})
 		return
 	}
-	h.writeOK(w, r, map[string]any{"scanStatus": map[string]any{"@scanning": false, "@count": 0}})
+	h.writeOK(w, r, map[string]any{"scanStatus": map[string]any{"@scanning": false, "@count": int32(0)}})
 }
 
 // ==================== 辅助 ====================
@@ -1917,18 +1902,19 @@ func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
 	return map[string]any{
 		"@id":          id,
-		"@parent":      artistID(artist), // [新增] 告诉客户端它的父级是歌手
-		"@isDir":       true,             // [新增] 告诉客户端这是个目录
+		"@parent":      artistID(artist),
+		"@isDir":       true,
 		"@name":        name,
-		"@title":       name,             // [新增] 很多客户端找 title 而不是 name
+		"@title":       name,
 		"@album":       name,
 		"@artist":      artist,
 		"@artistId":    artistID(artist),
 		"@albumArtist": artist,
 		"@coverArt":    id,
-		"@songCount":   songCount,
-		"@duration":    duration,
+		"@songCount":   int32(songCount),
+		"@duration":    int32(duration),
 		"@created":     "2024-01-01T00:00:00.000Z",
+		"@type":        "music",
 	}
 }
 
@@ -1978,16 +1964,16 @@ func songToMap(s *db.Song) map[string]any {
 		"@album":       s.Album,
 		"@artist":      s.Artist,
 		"@albumArtist": s.AlbumArtist,
-		"@track":       track,
-		"@discNumber":  disc,
-		"@year":        s.Year,
+		"@track":       int32(track),
+		"@discNumber":  int32(disc),
+		"@year":        int32(s.Year),
 		"@genre":       s.Genre,
 		"@coverArt":    coverArt,
 		"@size":        s.FileSize,
 		"@contentType": ct,
 		"@suffix":      suffix,
-		"@duration":    s.Dur,
-		"@bitRate":     s.Bitrate,
+		"@duration":    int32(s.Dur),
+		"@bitRate":     int32(s.Bitrate),
 		"@path":        s.Path,
 		"@albumId":     aID,
 		"@artistId":    arID,
