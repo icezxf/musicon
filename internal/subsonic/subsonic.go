@@ -108,12 +108,27 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
+	// 支持 OpenSubsonic formPost
+	if r.Method == http.MethodPost {
+		r.ParseForm()
+		for k, v := range r.PostForm {
+			if len(v) > 0 {
+				r.URL.Query().Set(k, v[0])
+			}
+		}
+	}
+
 	p := strings.TrimPrefix(r.URL.Path, "/rest/")
 	p = strings.TrimSuffix(p, ".view")
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
-	if p != "ping" {
+	if p == "ping" {
+		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
+			h.writeErr(w, r, 40, "Wrong username or password")
+			return
+		}
+	} else {
 		if !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
 			return
@@ -128,7 +143,13 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case "getLicense":
 		h.writeOK(w, r, map[string]any{"license": map[string]any{"@valid": true}})
 	case "getOpenSubsonicExtensions":
-		h.writeOK(w, r, map[string]any{"openSubsonicExtensions": []any{}})
+		h.writeOK(w, r, map[string]any{
+			"openSubsonicExtensions": []map[string]any{
+				{"name": "formPost", "versions": []int{1}},
+				{"name": "transcodeOffset", "versions": []int{1}},
+				{"name": "songLyrics", "versions": []int{1}},
+			},
+		})
 	case "getMusicFolders":
 		h.getMusicFolders(w, r)
 	case "getIndexes":
@@ -401,6 +422,7 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
+	artistSongCount := map[string]int{} // [标准] ArtistID3 规范字段
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -413,6 +435,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
+			artistSongCount[name]++
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -429,6 +452,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
+			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -465,7 +489,7 @@ func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string
 	h.writeOK(w, r, map[string]any{
 		"indexes": map[string]any{
 			"@ignoredArticles": "The El La Los Las Le Les",
-			"@lastModified":    "0",
+			"@lastModified":    strconv.FormatInt(time.Now().UnixMilli(), 10),
 			"index":            indexes,
 		},
 	})
@@ -1015,13 +1039,30 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			proxyImage(w, d.Pic)
 			return
 		}
-		http.Error(w, "not found", 404)
+		
+		// [规范兜底] 如果网图找不到，去找该歌手的本地封面
+		songs := h.visibleSongs(user)
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id && s.CoverPath != "" {
+					if size > 0 {
+						h.serveThumb(w, r, s.CoverPath, size)
+					} else {
+						serveLocalCover(w, r, s.CoverPath)
+					}
+					return
+				}
+			}
+		}
+		// 彻底防 404 崩溃
+		serveDefaultCover(w)
 		return
 	}
 
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
-		http.Error(w, "not found", 404)
+		// 彻底防 404 崩溃
+		serveDefaultCover(w)
 		return
 	}
 	if size > 0 {
@@ -1067,6 +1108,14 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 	return s.CoverPath
 }
 
+// [新增] 1x1 透明图，防止客户端因为 404 白屏
+func serveDefaultCover(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	pngData := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}
+	w.Write(pngData)
+}
+
 func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string, size int) {
 	thumbDir := filepath.Join(h.Cfg.DataDir, "covers_thumb")
 	os.MkdirAll(thumbDir, 0755)
@@ -1081,7 +1130,7 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "not found", 404)
+		serveDefaultCover(w)
 		return
 	}
 	defer f.Close()
@@ -1112,13 +1161,13 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "not found", 404)
+		serveDefaultCover(w)
 		return
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		http.Error(w, "stat failed", 500)
+		serveDefaultCover(w)
 		return
 	}
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
@@ -1128,17 +1177,21 @@ func proxyImage(w http.ResponseWriter, url string) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		http.Error(w, "bad url", 400)
+		serveDefaultCover(w)
 		return
 	}
 	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, err.Error(), 502)
+		serveDefaultCover(w)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		serveDefaultCover(w)
+		return
+	}
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
@@ -1154,6 +1207,14 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		if role != "admin" && p.Owner != user && !p.Public {
 			continue
 		}
+		
+		// [规范修复] 如果歌单没封面，用第一首歌的封面
+		coverArt := p.ID
+		songs, _ := h.DB.GetPlaylistSongs(p.ID)
+		if len(songs) > 0 && songs[0].CoverPath != "" {
+			coverArt = songs[0].ID
+		}
+
 		out = append(out, map[string]any{
 			"@id":        p.ID,
 			"@name":      p.Name,
@@ -1161,7 +1222,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			"@public":    p.Public,
 			"@songCount": p.Count,
 			"@duration":  p.Duration,
-			"@coverArt":  p.ID,
+			"@coverArt":  coverArt, // [关键]
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 		})
@@ -1188,6 +1249,13 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		entries = append(entries, songToMap(&songs[i]))
 		totalDur += songs[i].Dur
 	}
+	
+	// [规范修复] 歌单封面
+	coverArt := p.ID
+	if len(songs) > 0 && songs[0].CoverPath != "" {
+		coverArt = songs[0].ID
+	}
+
 	h.writeOK(w, r, map[string]any{
 		"playlist": map[string]any{
 			"@id":        p.ID,
@@ -1196,7 +1264,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 			"@public":    p.Public,
 			"@songCount": len(entries),
 			"@duration":  totalDur,
-			"@coverArt":  p.ID,
+			"@coverArt":  coverArt, // [关键]
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 			"entry":      entries,
@@ -1423,6 +1491,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 			break
 		}
 	}
+	
 	var jsonLines []map[string]any
 	for _, ln := range lines {
 		m := map[string]any{"@value": ln.Value}
@@ -1431,6 +1500,8 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 		}
 		jsonLines = append(jsonLines, m)
 	}
+	
+	// 严格遵循 OpenSubsonic songLyrics 规范
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
@@ -1438,6 +1509,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 				"@displayTitle":  s.Title,
 				"@lang":          "zho",
 				"@synced":        hasTimestamp,
+				"@offset":        0, // [规范字段]
 				"line":           jsonLines,
 			}},
 		},
@@ -1483,16 +1555,20 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	}
 
 	base := scheme + "://" + host
-	small := ""
+	var imgURL string
 	if hasPic {
-		small = base + "/rest/getArtistImage?id=" + id
+		imgURL = base + "/rest/getArtistImage?id=" + id
+	} else {
+		// [规范] 没网图就交给 getCoverArt 找本地图
+		imgURL = base + "/rest/getCoverArt?id=" + id
 	}
+
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
 			"biography":      bio,
-			"smallImageUrl":  small,
-			"mediumImageUrl": small,
-			"largeImageUrl":  small,
+			"smallImageUrl":  imgURL,
+			"mediumImageUrl": imgURL,
+			"largeImageUrl":  imgURL,
 			"similarArtist":  []any{},
 		},
 	})
@@ -1553,7 +1629,7 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		proxyImage(w, d.Pic)
 		return
 	}
-	http.Error(w, "not found", 404)
+	serveDefaultCover(w)
 }
 
 // ==================== 上报 ====================
@@ -1575,7 +1651,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		q = r.URL.Query().Get("any")
 	}
 	ql := strings.ToLower(q)
-	// [唯一修改] 兼容单引号全量搜索，绝对不加任何非标字段
 	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
 	
 	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
@@ -1584,6 +1659,15 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
 	
 	songs := h.visibleSongs(user)
+	
+	// [规范修复] 统计每个歌手的歌曲总数，配合 ArtistID3 标准字段
+	artistSongCount := map[string]int{}
+	for _, s := range songs {
+		for _, name := range splitArtists(s.Artist) {
+			artistSongCount[name]++
+		}
+	}
+
 	var matchedSongs []map[string]any
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
@@ -1602,9 +1686,12 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
-				// 原始纯净版结构，绝不添加 @songCount
+				// ArtistID3 标准对象，补齐 songCount
 				matchedArtists = append(matchedArtists, map[string]any{
-					"@id": artistID(name), "@name": name, "@albumCount": 1,
+					"@id":         artistID(name), 
+					"@name":       name, 
+					"@albumCount": 1,
+					"@songCount":  artistSongCount[name], // [标准字段]
 				})
 			}
 		}
