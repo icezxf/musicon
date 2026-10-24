@@ -468,7 +468,6 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 }
 
 func (h *Handler) getIndexes(w http.ResponseWriter, r *http.Request, user string) {
-	// 只返回纯粹的 artist 节点，坚决不加 child，避免客户端解析冲突
 	groups := h.buildArtistGroups(h.visibleSongs(user))
 	h.writeOK(w, r, map[string]any{
 		"indexes": map[string]any{
@@ -750,7 +749,6 @@ func (h *Handler) getAlbumList2(w http.ResponseWriter, r *http.Request, user str
 	}
 	out := make([]map[string]any, 0)
 	for _, a := range albums {
-		// 使用严格的 Child 结构，补全 title 和 parent
 		id := albumID(a.name, a.artist)
 		out = append(out, map[string]any{
 			"@id":          id,
@@ -1161,7 +1159,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	id := r.URL.Query().Get("id")
 	typ := r.URL.Query().Get("type")
 
-	// 修复客户端自作主张拼接的重复前缀
 	if strings.HasPrefix(id, "al-al-") {
 		id = strings.TrimPrefix(id, "al-")
 	}
@@ -1783,19 +1780,27 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		q = r.URL.Query().Get("any")
 	}
 	ql := strings.ToLower(q)
-	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
-	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
-	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
-	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
-	all := ql == "" || ql == "*"
-	songs := h.visibleSongs(user)
 	
+	// 兼容棉花音乐等将单引号等作为占位符的客户端
+	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
+
+	songCountStr := r.URL.Query().Get("songCount")
+	songOffsetStr := r.URL.Query().Get("songOffset")
+	artistCountStr := r.URL.Query().Get("artistCount")
+	albumCountStr := r.URL.Query().Get("albumCount")
+
+	songCount, _ := strconv.Atoi(songCountStr)
+	songOffset, _ := strconv.Atoi(songOffsetStr)
+	artistCount, _ := strconv.Atoi(artistCountStr)
+	albumCount, _ := strconv.Atoi(albumCountStr)
+
+	songs := h.visibleSongs(user)
 	matchedSongs := make([]map[string]any, 0)
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
 	matchedArtists := make([]map[string]any, 0)
 	matchedAlbums := make([]map[string]any, 0)
-	
+
 	for i := range songs {
 		s := &songs[i]
 		if !all {
@@ -1804,21 +1809,31 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 				continue
 			}
 		}
-		matchedSongs = append(matchedSongs, songToMap(s))
+		
+		// 当客户端明确传了 0 时，表示不需要该类型数据，不填充
+		if songCount > 0 || songCountStr == "" {
+			matchedSongs = append(matchedSongs, songToMap(s))
+		}
+		
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
-				matchedArtists = append(matchedArtists, map[string]any{
-					"@id": artistID(name), "@name": name, "@albumCount": 1,
-				})
+				if artistCount > 0 || artistCountStr == "" {
+					matchedArtists = append(matchedArtists, map[string]any{
+						"@id": artistID(name), "@name": name, "@albumCount": 1,
+					})
+				}
 			}
 		}
 		ak := s.Album + "|" + s.Artist
 		if !albumSet[ak] && s.Album != "" {
 			albumSet[ak] = true
-			matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
+			if albumCount > 0 || albumCountStr == "" {
+				matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
+			}
 		}
 	}
+
 	if songOffset > 0 && songOffset < len(matchedSongs) {
 		matchedSongs = matchedSongs[songOffset:]
 	} else if songOffset >= len(matchedSongs) {
@@ -1827,12 +1842,15 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	if songCount > 0 && len(matchedSongs) > songCount {
 		matchedSongs = matchedSongs[:songCount]
 	}
+
 	if artistCount > 0 && len(matchedArtists) > artistCount {
 		matchedArtists = matchedArtists[:artistCount]
 	}
+
 	if albumCount > 0 && len(matchedAlbums) > albumCount {
 		matchedAlbums = matchedAlbums[:albumCount]
 	}
+
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
 			"artist": matchedArtists,
