@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime/debug"
 	"sync"
@@ -27,6 +28,23 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cfg := config.Load()
 	log.Printf("[boot] MusicOn Go listening on %s", cfg.Listen)
+
+	// ==================== 启动内置 NCM 服务 ====================
+	var ncmCmd *exec.Cmd
+	// 检查文件是否存在，防止在本地开发环境(没有这个文件)报错
+	if _, err := os.Stat("/app/ncm-server"); err == nil {
+		ncmCmd = exec.Command("/app/ncm-server")
+		ncmCmd.Stdout = os.Stdout
+		ncmCmd.Stderr = os.Stderr
+		
+		log.Printf("[boot] Starting built-in NCM server...")
+		if err := ncmCmd.Start(); err != nil {
+			log.Printf("[boot] Failed to start NCM server: %v", err)
+		}
+	} else {
+		log.Printf("[boot] Built-in NCM server not found, skipping...")
+	}
+	// ==========================================================
 
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
@@ -80,6 +98,14 @@ func main() {
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		log.Println("[shutdown] signal received")
+		
+		// ==================== 关闭 NCM 服务 ====================
+		if ncmCmd != nil && ncmCmd.Process != nil {
+			log.Println("[shutdown] killing NCM server...")
+			_ = ncmCmd.Process.Kill()
+		}
+		// =======================================================
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {
