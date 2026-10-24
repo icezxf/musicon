@@ -1917,7 +1917,11 @@ func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
 	return map[string]any{
 		"@id":          id,
+		"@parent":      artistID(artist), // [新增] 告诉客户端它的父级是歌手
+		"@isDir":       true,             // [新增] 告诉客户端这是个目录
 		"@name":        name,
+		"@title":       name,             // [新增] 很多客户端找 title 而不是 name
+		"@album":       name,
 		"@artist":      artist,
 		"@artistId":    artistID(artist),
 		"@albumArtist": artist,
