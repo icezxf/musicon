@@ -53,7 +53,6 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 
 // ==================== 权限辅助 ====================
 
-// visibleSongs 返回该用户能看到的歌曲（admin 全量）
 func (h *Handler) visibleSongs(username string) []db.Song {
 	songs, _ := h.DB.ListSongs()
 	role := h.DB.GetUserRole(username)
@@ -67,7 +66,6 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 	}
 	out := make([]db.Song, 0, len(songs))
 	for _, s := range songs {
-		// 在线歌（source_id 为空）所有登录用户可见
 		if s.SourceID == "" || set[s.SourceID] {
 			out = append(out, s)
 		}
@@ -110,12 +108,27 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
+	// OpenSubsonic formPost 扩展支持
+	if r.Method == http.MethodPost {
+		r.ParseForm()
+		for k, v := range r.PostForm {
+			if len(v) > 0 {
+				r.URL.Query().Set(k, v[0])
+			}
+		}
+	}
+
 	p := strings.TrimPrefix(r.URL.Path, "/rest/")
 	p = strings.TrimSuffix(p, ".view")
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
-	if p != "ping" {
+	if p == "ping" {
+		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
+			h.writeErr(w, r, 40, "Wrong username or password")
+			return
+		}
+	} else {
 		if !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
 			return
@@ -130,7 +143,14 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case "getLicense":
 		h.writeOK(w, r, map[string]any{"license": map[string]any{"@valid": true}})
 	case "getOpenSubsonicExtensions":
-		h.writeOK(w, r, map[string]any{"openSubsonicExtensions": []any{}})
+		// 严格按照 OpenSubsonic 规范声明支持的扩展
+		h.writeOK(w, r, map[string]any{
+			"openSubsonicExtensions": []map[string]any{
+				{"name": "formPost", "versions": []int{1}},
+				{"name": "transcodeOffset", "versions": []int{1}},
+				{"name": "songLyrics", "versions": []int{1}},
+			},
+		})
 	case "getMusicFolders":
 		h.getMusicFolders(w, r)
 	case "getIndexes":
@@ -512,6 +532,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
+	// 严格遵循 OpenSubsonic，绝对不返回非标 song 数组
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
@@ -1153,7 +1174,6 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 	role := h.DB.GetUserRole(user)
 	var out []map[string]any
 	for _, p := range pls {
-		// admin 看全部；user 只看自己的 + 公开的
 		if role != "admin" && p.Owner != user && !p.Public {
 			continue
 		}
@@ -1578,17 +1598,27 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		q = r.URL.Query().Get("any")
 	}
 	ql := strings.ToLower(q)
-	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
-	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
-	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
-	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
-	all := ql == "" || ql == "*"
+	// 兼容空查询和单引号等占位符（OpenSubsonic 标准：空字符串代表全量）
+	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
+
+	songCountStr := r.URL.Query().Get("songCount")
+	songOffsetStr := r.URL.Query().Get("songOffset")
+	artistCountStr := r.URL.Query().Get("artistCount")
+	albumCountStr := r.URL.Query().Get("albumCount")
+
+	songCount, _ := strconv.Atoi(songCountStr)
+	songOffset, _ := strconv.Atoi(songOffsetStr)
+	artistCount, _ := strconv.Atoi(artistCountStr)
+	albumCount, _ := strconv.Atoi(albumCountStr)
+
 	songs := h.visibleSongs(user)
+
 	var matchedSongs []map[string]any
 	artistSet := map[string]bool{}
 	albumSet := map[string]bool{}
 	var matchedArtists []map[string]any
 	var matchedAlbums []map[string]any
+
 	for i := range songs {
 		s := &songs[i]
 		if !all {
@@ -1597,21 +1627,34 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 				continue
 			}
 		}
-		matchedSongs = append(matchedSongs, songToMap(s))
+
+		if songCount > 0 || songCountStr == "" {
+			matchedSongs = append(matchedSongs, songToMap(s))
+		}
+
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
-				matchedArtists = append(matchedArtists, map[string]any{
-					"@id": artistID(name), "@name": name, "@albumCount": 1,
-				})
+				if artistCount > 0 || artistCountStr == "" {
+					// 标准 Artist 对象，不包含非标 songCount
+					matchedArtists = append(matchedArtists, map[string]any{
+						"@id":         artistID(name),
+						"@name":       name,
+						"@albumCount": 1,
+					})
+				}
 			}
 		}
+
 		ak := s.Album + "|" + s.Artist
 		if !albumSet[ak] && s.Album != "" {
 			albumSet[ak] = true
-			matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
+			if albumCount > 0 || albumCountStr == "" {
+				matchedAlbums = append(matchedAlbums, albumToMap(s.Album, s.Artist, 1, s.Dur))
+			}
 		}
 	}
+
 	if songOffset > 0 && songOffset < len(matchedSongs) {
 		matchedSongs = matchedSongs[songOffset:]
 	} else if songOffset >= len(matchedSongs) {
@@ -1659,6 +1702,7 @@ func (h *Handler) getScanStatus(w http.ResponseWriter, r *http.Request) {
 
 func albumToMap(name, artist string, songCount, duration int) map[string]any {
 	id := albumID(name, artist)
+	// 回归最纯净的 OpenSubsonic AlbumID3，坚决不加 isDir 和 type
 	return map[string]any{
 		"@id":          id,
 		"@name":        name,
@@ -1707,6 +1751,7 @@ func songToMap(s *db.Song) map[string]any {
 			"@name": name,
 		})
 	}
+	// 纯净的 OpenSubsonic Child 结构
 	return map[string]any{
 		"@id":                 s.ID,
 		"@parent":             aID,
