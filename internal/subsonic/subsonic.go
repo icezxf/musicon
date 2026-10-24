@@ -422,7 +422,7 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{} // [标准] ArtistID3 规范字段
+	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -448,6 +448,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 				first = c
 			}
 		}
+		// ArtistID3 标准结构
 		groups[first] = append(groups[first], map[string]any{
 			"@id":         artistID(artist),
 			"@name":       artist,
@@ -534,6 +535,8 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
+	
+	// 严格标准，不返回 song 数组，但返回标准的 ArtistID3 字段
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
@@ -911,14 +914,18 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
+	
+	// [修复] 对 URL 进行转义，防止空格和中文导致客户端无法跳转
 	if u, err := url.Parse(rawURL); err == nil {
-		log.Printf("[stream] %s user=%s %s -> 302 %s%s", r.Method, user, id, u.Host, u.Path)
+		rawURL = u.String()
+		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
 	} else {
 		log.Printf("[stream] %s user=%s %s -> 302", r.Method, user, id)
 	}
 
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
+	// [维持不变] 302 跳转
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
@@ -1024,7 +1031,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	if typ == "artist" {
+	if typ == "artist" || strings.HasPrefix(id, "ar-") {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
 			name = h.resolveArtistName(id, user)
@@ -1040,7 +1047,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			return
 		}
 		
-		// [规范兜底] 如果网图找不到，去找该歌手的本地封面
+		// 找该歌手任意一首有封面的歌作为回退
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
 			for _, n := range splitArtists(s.Artist) {
@@ -1054,14 +1061,13 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 				}
 			}
 		}
-		// 彻底防 404 崩溃
+		// 终极兜底
 		serveDefaultCover(w)
 		return
 	}
 
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
-		// 彻底防 404 崩溃
 		serveDefaultCover(w)
 		return
 	}
@@ -1073,10 +1079,25 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 }
 
 func (h *Handler) findCoverPath(id, typ, user string) string {
-	if typ == "artist" {
-		return ""
-	}
 	songs := h.visibleSongs(user)
+
+	// 查找 ID 对应的歌曲
+	for _, s := range songs {
+		if s.ID == id {
+			if s.CoverPath != "" {
+				return s.CoverPath
+			}
+			// 如果该歌曲没封面，找同一张专辑里有封面的歌
+			for _, s2 := range songs {
+				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
+					return s2.CoverPath
+				}
+			}
+			return ""
+		}
+	}
+
+	// 处理专辑
 	if typ == "album" || strings.HasPrefix(id, "al-") {
 		for _, s := range songs {
 			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
@@ -1085,30 +1106,23 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 		}
 		return ""
 	}
+
+	// 处理歌单
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		realID := id
-		for strings.HasPrefix(realID, "pl-") {
-			realID = strings.TrimPrefix(realID, "pl-")
-		}
-		songs, _ := h.DB.GetPlaylistSongs(realID)
-		for _, s := range songs {
+		realID := strings.TrimPrefix(id, "pl-")
+		plSongs, _ := h.DB.GetPlaylistSongs(realID)
+		for _, s := range plSongs {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
 		}
 		return ""
 	}
-	s, err := h.DB.GetSong(id)
-	if err != nil {
-		return ""
-	}
-	if !h.DB.UserCanSeeSong(user, s.ID) {
-		return ""
-	}
-	return s.CoverPath
+
+	return ""
 }
 
-// [新增] 1x1 透明图，防止客户端因为 404 白屏
+// [标准透明兜底]
 func serveDefaultCover(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
@@ -1208,7 +1222,6 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			continue
 		}
 		
-		// [规范修复] 如果歌单没封面，用第一首歌的封面
 		coverArt := p.ID
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
 		if len(songs) > 0 && songs[0].CoverPath != "" {
@@ -1222,7 +1235,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			"@public":    p.Public,
 			"@songCount": p.Count,
 			"@duration":  p.Duration,
-			"@coverArt":  coverArt, // [关键]
+			"@coverArt":  coverArt,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 		})
@@ -1250,7 +1263,6 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		totalDur += songs[i].Dur
 	}
 	
-	// [规范修复] 歌单封面
 	coverArt := p.ID
 	if len(songs) > 0 && songs[0].CoverPath != "" {
 		coverArt = songs[0].ID
@@ -1264,7 +1276,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 			"@public":    p.Public,
 			"@songCount": len(entries),
 			"@duration":  totalDur,
-			"@coverArt":  coverArt, // [关键]
+			"@coverArt":  coverArt,
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 			"entry":      entries,
@@ -1501,7 +1513,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 		jsonLines = append(jsonLines, m)
 	}
 	
-	// 严格遵循 OpenSubsonic songLyrics 规范
+	// OpenSubsonic 标准歌词结构
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
@@ -1509,7 +1521,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 				"@displayTitle":  s.Title,
 				"@lang":          "zho",
 				"@synced":        hasTimestamp,
-				"@offset":        0, // [规范字段]
+				"@offset":        0,
 				"line":           jsonLines,
 			}},
 		},
@@ -1559,7 +1571,6 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	if hasPic {
 		imgURL = base + "/rest/getArtistImage?id=" + id
 	} else {
-		// [规范] 没网图就交给 getCoverArt 找本地图
 		imgURL = base + "/rest/getCoverArt?id=" + id
 	}
 
@@ -1660,7 +1671,6 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	
 	songs := h.visibleSongs(user)
 	
-	// [规范修复] 统计每个歌手的歌曲总数，配合 ArtistID3 标准字段
 	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
@@ -1686,12 +1696,11 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
-				// ArtistID3 标准对象，补齐 songCount
 				matchedArtists = append(matchedArtists, map[string]any{
 					"@id":         artistID(name), 
 					"@name":       name, 
 					"@albumCount": 1,
-					"@songCount":  artistSongCount[name], // [标准字段]
+					"@songCount":  artistSongCount[name], // 标准字段
 				})
 			}
 		}
