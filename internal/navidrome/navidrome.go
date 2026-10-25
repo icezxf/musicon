@@ -4,9 +4,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,14 +70,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":             clientID,
-		"isAdmin":        true,
-		"name":           req.Username,
-		"token":          token,
-		"username":       req.Username,
-		"subsonicSalt":   "123456",
-		"subsonicToken":  "dummy",
-		"lastFMApiKey":   "",
+		"id":            clientID,
+		"isAdmin":       true,
+		"name":          req.Username,
+		"token":         token,
+		"username":      req.Username,
+		"subsonicSalt":  "123456",
+		"subsonicToken": "dummy",
+		"lastFMApiKey":  "",
 	})
 }
 
@@ -214,19 +214,19 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		id := genID(agg.name + "|" + agg.artist)
 		arID := genID(agg.artist)
 		out = append(out, map[string]any{
-			"id":          id,
-			"name":        agg.name,
-			"artistId":    arID,
-			"artist":      agg.artist,
+			"id":            id,
+			"name":          agg.name,
+			"artistId":      arID,
+			"artist":        agg.artist,
 			"albumArtistId": arID,
-			"albumArtist": agg.artist,
-			"allArtistIds": arID,
-			"songCount":   agg.count,
-			"duration":    agg.dur,
-			"size":        agg.size,
-			"playCount":   0,
-			"rating":      0,
-			"starred":     false,
+			"albumArtist":   agg.artist,
+			"allArtistIds":  arID,
+			"songCount":     agg.count,
+			"duration":      agg.dur,
+			"size":          agg.size,
+			"playCount":     0,
+			"rating":        0,
+			"starred":       false,
 		})
 	}
 
@@ -245,44 +245,44 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 
 func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
 	songs := h.visibleSongs(user)
-	
+
 	// 简单过滤
 	albumID := r.URL.Query().Get("album_id")
-	
+
 	var out []map[string]any
 	for _, s := range songs {
 		sID := s.ID
 		aID := genID(s.Album + "|" + s.Artist)
 		arID := genID(s.Artist)
-		
+
 		if albumID != "" && albumID != aID {
 			continue
 		}
 
 		out = append(out, map[string]any{
-			"id":           sID,
-			"path":         s.Path,
-			"title":        s.Title,
-			"album":        s.Album,
-			"artistId":     arID,
-			"artist":       s.Artist,
+			"id":            sID,
+			"path":          s.Path,
+			"title":         s.Title,
+			"album":         s.Album,
+			"artistId":      arID,
+			"artist":        s.Artist,
 			"albumArtistId": arID,
-			"albumArtist":  s.AlbumArtist,
-			"albumId":      aID,
-			"hasCoverArt":  true,
-			"trackNumber":  s.TrackNumber,
-			"discNumber":   s.DiscNumber,
-			"year":         s.Year,
-			"size":         s.FileSize,
-			"suffix":       s.Fmt,
-			"duration":     s.Dur,
-			"bitRate":      s.Bitrate,
-			"channels":     s.Channels,
-			"genre":        s.Genre,
-			"playCount":    0,
-			"rating":       0,
-			"starred":      false,
-			"compilation":  false,
+			"albumArtist":   s.AlbumArtist,
+			"albumId":       aID,
+			"hasCoverArt":   true,
+			"trackNumber":   s.TrackNumber,
+			"discNumber":    s.DiscNumber,
+			"year":          s.Year,
+			"size":          s.FileSize,
+			"suffix":        s.Fmt,
+			"duration":      s.Dur,
+			"bitRate":       s.Bitrate,
+			"channels":      s.Channels,
+			"genre":         s.Genre,
+			"playCount":     0,
+			"rating":        0,
+			"starred":       false,
+			"compilation":   false,
 		})
 	}
 
@@ -316,7 +316,7 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 func paginate(data []map[string]any, r *http.Request) []map[string]any {
 	start, _ := strconv.Atoi(r.URL.Query().Get("_start"))
 	end, _ := strconv.Atoi(r.URL.Query().Get("_end"))
-	
+
 	if start > len(data) {
 		start = len(data)
 	}
