@@ -23,7 +23,7 @@ import (
 
 type Handler struct {
 	DB    *db.Holder
-	AList *alist.Manager // 加入 AList，用于获取真实播放链接
+	AList *alist.Manager // 仅用于 302 获取真实链接
 	Cfg   *config.Config
 }
 
@@ -120,7 +120,6 @@ func (h *Handler) checkAuth(r *http.Request) (string, bool) {
 			return user.(string), true
 		}
 	}
-	// Navidrome 客户端在播放流媒体时，有时候认证 Token 会放在 URL 参数里
 	if token := r.URL.Query().Get("token"); token != "" {
 		if user, ok := sessionTokens.Load(token); ok {
 			return user.(string), true
@@ -143,7 +142,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	p = strings.TrimSuffix(p, "/")
 	log.Printf("[navidrome] %s %s user=%s", r.Method, p, username)
 
-	// 流媒体请求直接返回 302 重定向，不需要返回 JSON Header
 	if p == "stream" || strings.HasPrefix(p, "stream/") {
 		h.handleStream(w, r)
 		return
@@ -197,20 +195,30 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 调用你现有的 AList 逻辑获取真实链接（假设你的方法名是 GetFileURL 或类似）
-	// 如果方法名不同，请替换为 subsonic.go 里获取 302 链接的那一行
-	realURL, err := h.AList.GetRawURL(song.Path)
+	if strings.HasPrefix(song.ID, "lxv-") || song.Fmt == "VIRTUAL" {
+		http.Error(w, "virtual songs not supported in native API", http.StatusNotImplemented)
+		return
+	}
+
+	providerID := song.ProviderID
+	if providerID == "" {
+		providerID = "alist-1"
+	}
+
+	// 正确调用 alist.Client.GetRawURL
+	rawURL, err := h.AList.Get(providerID).GetRawURL(song.Path)
 	if err != nil {
 		log.Printf("[navidrome] alist stream error: %v", err)
 		http.Error(w, "stream error", http.StatusInternalServerError)
 		return
 	}
 
-	// 直接返回 302，客户端会自己去 AList 拉流
-	http.Redirect(w, r, realURL, http.StatusFound)
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Accept-Ranges", "bytes")
+	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
-// ==================== 基础字段清洗（解决标签为空的问题） ====================
+// ==================== 基础字段清洗 ====================
 
 func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string) {
 	album = strings.TrimSpace(s.Album)
@@ -456,7 +464,7 @@ func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user
 func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr string) map[string]any {
 	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
 	dur := float64(s.Dur)
-	if dur <= 0 { dur = 0.1 } // 防止客户端认为 0 是无效歌曲
+	if dur <= 0 { dur = 0.1 }
 
 	return map[string]any{
 		"id": s.ID, "path": s.Path, "title": title, "album": album,
