@@ -626,17 +626,41 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 		case http.MethodGet:
 			h.getPlaylistTracks(w, r, id, user)
 		case http.MethodPost:
-			// 添加歌曲到歌单，Body: {"ids": "song1,song2"}
+			// 【修复】兼容数组和字符串两种格式
+			var songIDs []string
 			var req struct {
-				Ids string `json:"ids"`
+				Ids interface{} `json:"ids"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				log.Printf("[navidrome] playlist add tracks decode err: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"bad request"}`))
 				return
 			}
-			if req.Ids != "" {
-				songIDs := strings.Split(req.Ids, ",")
-				h.DB.AddSongsToPlaylist(id, songIDs)
+			
+			if req.Ids != nil {
+				if arr, ok := req.Ids.([]interface{}); ok {
+					// 客户端发的是数组 ["id1", "id2"]
+					for _, item := range arr {
+						if s, ok := item.(string); ok {
+							songIDs = append(songIDs, s)
+						}
+					}
+				} else if str, ok := req.Ids.(string); ok {
+					// 客户端发的是字符串 "id1,id2"
+					songIDs = strings.Split(str, ",")
+				}
+			}
+			
+			if len(songIDs) > 0 {
+				log.Printf("[navidrome] adding %d songs to playlist %s", len(songIDs), id)
+				// 如果底层数据库报错，打印出来并返回错误
+				if err := h.DB.AddSongsToPlaylist(id, songIDs); err != nil {
+					log.Printf("[navidrome] AddSongsToPlaylist err: %v", err)
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error":"add failed"}`))
+					return
+				}
 			}
 			w.Write([]byte("{}"))
 		case http.MethodDelete:
@@ -651,7 +675,9 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				}
 			}
 			if len(toRemove) > 0 {
-				h.DB.RemoveSongsFromPlaylist(id, toRemove)
+				if err := h.DB.RemoveSongsFromPlaylist(id, toRemove); err != nil {
+					log.Printf("[navidrome] RemoveSongsFromPlaylist err: %v", err)
+				}
 			}
 			w.Write([]byte("{}"))
 		}
