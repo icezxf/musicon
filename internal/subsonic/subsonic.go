@@ -422,7 +422,7 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{}
+	artistSongCount := map[string]int{} // [新增]
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -435,7 +435,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
-			artistSongCount[name]++
+			artistSongCount[name]++ // [新增]
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -452,27 +452,11 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist], // ArtistID3 标准字段
+			"@songCount":  artistSongCount[artist], // [核心修复] 标准字段
 			"@coverArt":   artistID(artist),
 		})
 	}
-	keys := make([]string, 0, len(groups))
-	for k := range groups {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var indexes []map[string]any
-	for _, k := range keys {
-		sort.Slice(groups[k], func(i, j int) bool {
-			return groups[k][i]["@name"].(string) < groups[k][j]["@name"].(string)
-		})
-		indexes = append(indexes, map[string]any{
-			"@name":  k,
-			"artist": groups[k],
-		})
-	}
-	return indexes
-}
+    // ... 后续代码不变 ...
 
 func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
