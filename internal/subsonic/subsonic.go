@@ -1997,13 +1997,17 @@ func songToMap(s *db.Song) map[string]any {
 	if s.CoverPath == "" {
 		coverArt = aID
 	}
-	var artists []map[string]any
-	for _, name := range splitArtists(s.Artist) {
-		artists = append(artists, map[string]any{
-			"@id":   artistID(name),
-			"@name": name,
-		})
+	
+	// 【核心兜底】防止 0 导致客户端崩溃
+	track := s.TrackNumber
+	if track <= 0 {
+		track = 1
 	}
+	disc := s.DiscNumber
+	if disc <= 0 {
+		disc = 1
+	}
+
 	return map[string]any{
 		"@id":                 s.ID,
 		"@parent":             aID,
@@ -2014,8 +2018,8 @@ func songToMap(s *db.Song) map[string]any {
 		"@albumArtist":        s.AlbumArtist,
 		"@displayArtist":      s.Artist,
 		"@displayAlbumArtist": s.AlbumArtist,
-		"@track":              s.TrackNumber,
-		"@discNumber":         s.DiscNumber,
+		"@track":              track,       // 兜底
+		"@discNumber":         disc,        // 兜底
 		"@year":               s.Year,
 		"@genre":              s.Genre,
 		"@coverArt":           coverArt,
@@ -2034,7 +2038,6 @@ func songToMap(s *db.Song) map[string]any {
 		"@channelCount":       s.Channels,
 		"@composer":           s.Composer,
 		"@isrc":               s.ISRC,
-		"artists":             artists,
 	}
 }
 
