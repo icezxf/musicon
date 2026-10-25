@@ -1234,7 +1234,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
-			// 解析出真实歌手名
 			name = h.resolveArtistName(id, user)
 		}
 		
@@ -1752,51 +1751,29 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 
 func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user string, key string) {
 	id := r.URL.Query().Get("id")
-	host := r.Host
+	
+	// 强制使用 https，避免 Mixed Content 拦截
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
-		host = fh
-	}
 	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
 		scheme = fp
 	}
-	name := h.resolveArtistName(id, user)
-	bio := ""
-	hasPic := false
-
-	if name != "" {
-		if h.NCM != nil {
-			if d, err := h.NCM.GetArtistDetail(name); err == nil {
-				bio = d.Bio
-				hasPic = d.Pic != ""
-			}
-		}
-		if !hasPic && bio == "" {
-			if d, err := h.LX.GetSingerDetail(name); err == nil {
-				if bio == "" {
-					bio = d.Bio
-				}
-				if !hasPic {
-					hasPic = d.Pic != ""
-				}
-			}
-		}
+	if ref := r.Header.Get("Referer"); strings.HasPrefix(ref, "https://") {
+		scheme = "https"
 	}
-
+	host := r.Host
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		host = fh
+	}
+	
 	base := scheme + "://" + host
-	var imgURL string
-	if hasPic {
-		imgURL = base + "/rest/getArtistImage?id=" + id
-	} else {
-		imgURL = base + "/rest/getCoverArt?id=" + id
-	}
+	imgURL := base + "/rest/getArtistImage?id=" + id
 
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
-			"biography":      bio,
+			"biography":      "",
 			"smallImageUrl":  imgURL,
 			"mediumImageUrl": imgURL,
 			"largeImageUrl":  imgURL,
@@ -1831,16 +1808,18 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 	id := r.URL.Query().Get("id")
 	name := h.resolveArtistName(id, user)
 
-	if h.NCM != nil && name != "" {
+	if h.NCM != nil && name != "" && name != id {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 			proxyImage(w, d.Pic)
 			return
 		}
 	}
 
-	if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-		proxyImage(w, d.Pic)
-		return
+	if h.LX != nil && name != "" && name != id {
+		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
+			proxyImage(w, d.Pic)
+			return
+		}
 	}
 	serveDefaultCover(w)
 }
