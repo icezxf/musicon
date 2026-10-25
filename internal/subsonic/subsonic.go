@@ -1188,23 +1188,17 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	if strings.HasPrefix(id, "mf-") {
-		id = strings.TrimPrefix(id, "mf-")
-		typ = "song"
-	}
-	if strings.HasPrefix(id, "al-al-") {
-		id = strings.TrimPrefix(id, "al-")
-	}
-	if strings.HasPrefix(id, "ar-ar-") {
-		id = strings.TrimPrefix(id, "ar-")
-	}
-	if strings.HasPrefix(id, "pl-pl-") {
-		id = strings.TrimPrefix(id, "pl-")
-	}
+	// 【修复】彻底剥离客户端可能带的各种前缀，只留纯 ID
+	id = strings.TrimPrefix(id, "mf-")
+	id = strings.TrimPrefix(id, "al-")
+	id = strings.TrimPrefix(id, "ar-")
+	id = strings.TrimPrefix(id, "pl-")
 
+	// 如果是 32 位 MD5，且没有明确指明 type，我们需要智能识别
 	if len(id) == 32 && typ == "" {
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
+			// 1. 判断是否是歌手
 			for _, name := range splitArtists(s.Artist) {
 				if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
 					typ = "artist"
@@ -1214,19 +1208,25 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			if typ == "artist" {
 				break
 			}
-			if fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == id {
+			// 2. 判断是否是专辑（带空值兜底，必须跟 navidrome.go 里的 cleanSongMeta 一致）
+			album := strings.TrimSpace(s.Album)
+			if album == "" { album = "未知专辑" }
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			if fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id {
 				typ = "album"
 				break
 			}
 		}
 	}
 
+	// 如果原本就有前缀，根据前缀推断 type
 	if typ == "" {
-		if strings.HasPrefix(id, "ar-") {
+		if strings.HasPrefix(r.URL.Query().Get("id"), "ar-") {
 			typ = "artist"
-		} else if strings.HasPrefix(id, "al-") {
+		} else if strings.HasPrefix(r.URL.Query().Get("id"), "al-") {
 			typ = "album"
-		} else if strings.HasPrefix(id, "pl-") {
+		} else if strings.HasPrefix(r.URL.Query().Get("id"), "pl-") {
 			typ = "playlist"
 		}
 	}
@@ -1234,7 +1234,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
-			name = h.resolveArtistName(id, user)
+			name = h.resolveArtistName(id, user) // 这里传入的 id 已经是纯 MD5 或纯 8位
 		}
 		
 		// 1. 优先去网易云拉取高清歌手写真
@@ -1253,7 +1253,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			}
 		}
 		
-		// 3. 实在没图，返回默认的灰色头像。绝不拿专辑封面凑数！
+		// 3. 实在没图，返回默认的灰色头像
 		serveDefaultCover(w)
 		return
 	}
@@ -1274,22 +1274,37 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
-	rawID := id
-	if strings.HasPrefix(rawID, "al-") {
-		rawID = strings.TrimPrefix(rawID, "al-")
-	} else if strings.HasPrefix(rawID, "ar-") {
-		rawID = strings.TrimPrefix(rawID, "ar-")
-	}
+	// 匹配 32 位 MD5 专辑（带空值兜底，和 navidrome.go 一致）
 	for _, s := range songs {
-		ndID := fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist)))
-		if ndID == rawID && s.CoverPath != "" {
+		album := strings.TrimSpace(s.Album)
+		if album == "" { album = "未知专辑" }
+		artist := strings.TrimSpace(s.Artist)
+		if artist == "" { artist = "未知歌手" }
+		ndID := fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist)))
+		if ndID == id && s.CoverPath != "" {
 			return s.CoverPath
 		}
 	}
+	// 匹配 32 位 MD5 歌手
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
 			ndID := fmt.Sprintf("%x", md5.Sum([]byte(name)))
-			if ndID == rawID && s.CoverPath != "" {
+			if ndID == id && s.CoverPath != "" {
+				return s.CoverPath
+			}
+		}
+	}
+
+	// 原有的逻辑
+	rawID := id
+	for _, s := range songs {
+		// 匹配带前缀的专辑 ID (al-xxx)
+		if albumID(s.Album, s.Artist) == rawID && s.CoverPath != "" {
+			return s.CoverPath
+		}
+		// 匹配带前缀的歌手 ID (ar-xxx)
+		for _, name := range splitArtists(s.Artist) {
+			if artistID(name) == rawID && s.CoverPath != "" {
 				return s.CoverPath
 			}
 		}
@@ -1300,6 +1315,7 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
+			// 如果歌曲本身没封面，找它同专辑的
 			for _, s2 := range songs {
 				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
 					return s2.CoverPath
@@ -1307,26 +1323,6 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 			}
 			return ""
 		}
-	}
-
-	if typ == "album" || strings.HasPrefix(id, "al-") {
-		for _, s := range songs {
-			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
-				return s.CoverPath
-			}
-		}
-		return ""
-	}
-
-	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
-		realID := strings.TrimPrefix(id, "pl-")
-		plSongs, _ := h.DB.GetPlaylistSongs(realID)
-		for _, s := range plSongs {
-			if s.CoverPath != "" {
-				return s.CoverPath
-			}
-		}
-		return ""
 	}
 
 	return ""
@@ -1752,7 +1748,6 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user string, key string) {
 	id := r.URL.Query().Get("id")
 	
-	// 强制使用 https，避免 Mixed Content 拦截
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -1790,13 +1785,7 @@ func (h *Handler) resolveArtistName(id, user string) string {
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
-			if artistID(name) == id {
-				return name
-			}
-			if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
-				return name
-			}
-			if name == id {
+			if artistID(name) == id || fmt.Sprintf("%x", md5.Sum([]byte(name))) == id || name == id {
 				return name
 			}
 		}
