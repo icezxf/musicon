@@ -287,7 +287,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
-			"coverArt":              id, // 告知客户端去拉取歌手封面
+			"coverArt":              id,
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
 			"genres":                nil,
@@ -340,7 +340,7 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
-		"coverArt":              id, // 告知客户端去拉取歌手封面
+		"coverArt":              id,
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
 		"genres":                nil,
@@ -552,6 +552,26 @@ func (h *Handler) handlePlaylistRoot(w http.ResponseWriter, r *http.Request, use
 	switch r.Method {
 	case http.MethodGet:
 		h.getPlaylists(w, r, user)
+	case http.MethodPost:
+		// 创建歌单
+		var req struct {
+			Name    string `json:"name"`
+			Comment string `json:"comment"`
+			Public  bool   `json:"public"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"bad request"}`))
+			return
+		}
+		
+		id, err := h.DB.CreatePlaylist(req.Name, req.Comment, user, req.Public)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"`+err.Error()+`"}`))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": id})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -562,22 +582,81 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 	id := parts[1]
 	
 	if len(parts) == 2 {
+		// /api/playlist/[id]
 		switch r.Method {
 		case http.MethodGet:
 			h.getPlaylistDetail(w, r, id, user)
 		case http.MethodDelete:
+			// 删除歌单
+			p, err := h.DB.GetPlaylist(id)
+			if err != nil {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"error":"not found"}`))
+				return
+			}
+			role := h.DB.GetUserRole(user)
+			if role != "admin" && p.Owner != user {
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"forbidden"}`))
+				return
+			}
 			h.DB.DeletePlaylist(id)
 			w.Write([]byte("{}"))
 		case http.MethodPut:
+			// 更新歌单
+			var req struct {
+				Name    string `json:"name"`
+				Comment string `json:"comment"`
+				Public  bool   `json:"public"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"bad request"}`))
+				return
+			}
+			
+			// 兼容一下可能为空的更新
+			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
+			h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id)
+			b := 0; if req.Public { b = 1 }
+			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id)
+			
 			w.Write([]byte("{}"))
 		}
 	} else if len(parts) == 3 && parts[2] == "tracks" {
+		// /api/playlist/[id]/tracks
 		switch r.Method {
 		case http.MethodGet:
 			h.getPlaylistTracks(w, r, id, user)
 		case http.MethodPost:
+			// 添加歌曲到歌单，Body: {"ids": "song1,song2"}
+			var req struct {
+				Ids string `json:"ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if req.Ids != "" {
+				// 注意：如果是数组格式也可以兼容一下
+				songIDs := strings.Split(req.Ids, ",")
+				h.DB.AddSongsToPlaylist(id, songIDs)
+			}
 			w.Write([]byte("{}"))
 		case http.MethodDelete:
+			// 从歌单移除歌曲，Query: id=2&id=3 (此处的 id 是从 1 开始的行号)
+			songs, _ := h.DB.GetPlaylistSongs(id)
+			q := r.URL.Query()
+			rowIDs := q["id"]
+			var toRemove []string
+			for _, rowStr := range rowIDs {
+				if idx, err := strconv.Atoi(rowStr); err == nil && idx > 0 && idx <= len(songs) {
+					toRemove = append(toRemove, songs[idx-1].ID)
+				}
+			}
+			if len(toRemove) > 0 {
+				h.DB.RemoveSongsFromPlaylist(id, toRemove)
+			}
 			w.Write([]byte("{}"))
 		}
 	}
