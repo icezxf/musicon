@@ -23,7 +23,7 @@ import (
 
 type Handler struct {
 	DB    *db.Holder
-	AList *alist.Manager // 仅用于 302 获取真实链接
+	AList *alist.Manager
 	Cfg   *config.Config
 }
 
@@ -50,7 +50,6 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/star", h.route)
 	mux.HandleFunc("/api/unstar", h.route)
 	
-	// Navidrome 原生的流媒体播放接口
 	mux.HandleFunc("/api/stream", h.route)
 	mux.HandleFunc("/api/stream/", h.route)
 }
@@ -177,7 +176,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 核心：音频流 302 重定向 ====================
+// ==================== 核心：音频流 302 ====================
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
 	songID := r.URL.Query().Get("id")
@@ -205,7 +204,6 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
 		providerID = "alist-1"
 	}
 
-	// 正确调用 alist.Client.GetRawURL
 	rawURL, err := h.AList.Get(providerID).GetRawURL(song.Path)
 	if err != nil {
 		log.Printf("[navidrome] alist stream error: %v", err)
@@ -242,9 +240,20 @@ func maxNum(a, b int) int {
 	return b
 }
 
+func isStarred(r *http.Request) bool {
+	v := r.URL.Query().Get("starred")
+	return v == "true" || v == "1"
+}
+
 // ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
+	if isStarred(r) {
+		w.Header().Set("x-total-count", "0")
+		w.Write([]byte("[]"))
+		return
+	}
+
 	songs := h.visibleSongs(user)
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
 
@@ -267,17 +276,28 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	nowStr := time.Now().Format(time.RFC3339)
 	var out []map[string]any
 	for name, agg := range artistMap {
+		id := genID(name)
 		out = append(out, map[string]any{
-			"id": genID(name), "name": name, "albumCount": len(artistAlbums[name]),
-			"songCount": agg.songCount, "size": agg.size, "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": false, "starredAt": nil, "genres": nil,
-			"fullText": " " + name, "orderArtistName": name, "externalUrl": "",
-			"externalInfoUpdatedAt": nil, "createdAt": nowStr, "updatedAt": nowStr,
+			"playCount":             0,
+			"playDate":              nil,
+			"rating":                0,
+			"starred":               false,
+			"starredAt":             nil,
+			"id":                    id,
+			"name":                  name,
+			"albumCount":            len(artistAlbums[name]),
+			"songCount":             agg.songCount,
+			"genres":                nil,
+			"fullText":              " " + name,
+			"orderArtistName":       name,
+			"size":                  agg.size,
+			"externalUrl":           "https://www.last.fm/music/" + name,
+			"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 		})
 	}
+	
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
 	total := len(out)
 	out = paginate(out, r)
@@ -311,16 +331,32 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		return
 	}
 
-	nowStr := time.Now().Format(time.RFC3339)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id": id, "name": artistName, "albumCount": len(albumSet), "songCount": songCount,
-		"size": totalSize, "playCount": 0, "playDate": nil, "rating": 0, "starred": false,
-		"starredAt": nil, "genres": nil, "fullText": " " + artistName, "orderArtistName": artistName,
-		"externalUrl": "", "externalInfoUpdatedAt": nil, "createdAt": nowStr, "updatedAt": nowStr,
+		"playCount":             0,
+		"playDate":              nil,
+		"rating":                0,
+		"starred":               false,
+		"starredAt":             nil,
+		"id":                    id,
+		"name":                  artistName,
+		"albumCount":            len(albumSet),
+		"songCount":             songCount,
+		"genres":                nil,
+		"fullText":              " " + artistName,
+		"orderArtistName":       artistName,
+		"size":                  totalSize,
+		"externalUrl":           "https://www.last.fm/music/" + artistName,
+		"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
 
 func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string) {
+	if isStarred(r) {
+		w.Header().Set("x-total-count", "0")
+		w.Write([]byte("[]"))
+		return
+	}
+
 	songs := h.visibleSongs(user)
 	artistIDFilter := r.URL.Query().Get("artist_id")
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
@@ -359,6 +395,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		if minYear == 9999 { minYear = 0 }
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
+			"coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
 			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": strconv.Itoa(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
@@ -388,8 +425,9 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 			if outAlbum == nil {
 				arID := genID(artist)
 				outAlbum = map[string]any{
-					"id": id, "name": album, "embedArtPath": s.CoverPath, "artistId": arID,
-					"artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
+					"id": id, "name": album, "embedArtPath": s.CoverPath,
+					"coverArt": id,
+					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": strconv.Itoa(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
@@ -417,6 +455,12 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 // ==================== 歌曲 ====================
 
 func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
+	if isStarred(r) {
+		w.Header().Set("x-total-count", "0")
+		w.Write([]byte("[]"))
+		return
+	}
+
 	songs := h.visibleSongs(user)
 	albumIDFilter := r.URL.Query().Get("album_id")
 	titleFilter := strings.ToLower(r.URL.Query().Get("title"))
@@ -469,7 +513,9 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 	return map[string]any{
 		"id": s.ID, "path": s.Path, "title": title, "album": album,
 		"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
-		"albumId": aID, "hasCoverArt": s.CoverPath != "", "trackNumber": maxNum(1, s.TrackNumber),
+		"albumId": aID, 
+		"coverArt": aID, 
+		"hasCoverArt": s.CoverPath != "", "trackNumber": maxNum(1, s.TrackNumber),
 		"discNumber": maxNum(1, s.DiscNumber), "year": s.Year, "date": strconv.Itoa(s.Year),
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix,
 		"duration": dur, "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
