@@ -1887,7 +1887,14 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 				continue
 			}
 		}
-		matchedSongs = append(matchedSongs, songToMap(s))
+		
+		// 【核心修复】强行塞满它的本地库，解决歌曲数为 0 的问题
+		if all {
+			matchedSongs = append(matchedSongs, songToMap(s))
+		} else if songCount > 0 || songCountStr == "" {
+			matchedSongs = append(matchedSongs, songToMap(s))
+		}
+
 		for _, name := range splitArtists(s.Artist) {
 			if !artistSet[name] {
 				artistSet[name] = true
