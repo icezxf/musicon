@@ -108,7 +108,6 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// OpenSubsonic formPost 扩展支持
 	if r.Method == http.MethodPost {
 		r.ParseForm()
 		for k, v := range r.PostForm {
@@ -512,7 +511,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	artistName := ""
 	var artistSongs []map[string]any
 
-	// 判断是否为棉花音乐
 	isPureMusic := r.URL.Query().Get("c") == "PureMusic"
 
 	for _, s := range songs {
@@ -529,7 +527,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			continue
 		}
 
-		// 特供精简版，极致防崩溃
 		artistSongs = append(artistSongs, cottonSongToMap(&s))
 
 		k := s.Album + "|" + s.Artist
@@ -561,7 +558,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		"album":       albumList,
 	}
 
-	// 给棉花音乐强制加上 song 数组
 	if isPureMusic {
 		artistObj["song"] = artistSongs
 	}
@@ -1997,17 +1993,13 @@ func songToMap(s *db.Song) map[string]any {
 	if s.CoverPath == "" {
 		coverArt = aID
 	}
-	
-	// 【核心兜底】防止 0 导致客户端崩溃
-	track := s.TrackNumber
-	if track <= 0 {
-		track = 1
+	var artists []map[string]any
+	for _, name := range splitArtists(s.Artist) {
+		artists = append(artists, map[string]any{
+			"@id":   artistID(name),
+			"@name": name,
+		})
 	}
-	disc := s.DiscNumber
-	if disc <= 0 {
-		disc = 1
-	}
-
 	return map[string]any{
 		"@id":                 s.ID,
 		"@parent":             aID,
@@ -2018,8 +2010,8 @@ func songToMap(s *db.Song) map[string]any {
 		"@albumArtist":        s.AlbumArtist,
 		"@displayArtist":      s.Artist,
 		"@displayAlbumArtist": s.AlbumArtist,
-		"@track":              track,       // 兜底
-		"@discNumber":         disc,        // 兜底
+		"@track":              s.TrackNumber,
+		"@discNumber":         s.DiscNumber,
 		"@year":               s.Year,
 		"@genre":              s.Genre,
 		"@coverArt":           coverArt,
@@ -2038,10 +2030,10 @@ func songToMap(s *db.Song) map[string]any {
 		"@channelCount":       s.Channels,
 		"@composer":           s.Composer,
 		"@isrc":               s.ISRC,
+		"artists":             artists,
 	}
 }
 
-// 专为棉花音乐生成的纯净版歌曲对象，防止它解析崩溃
 func cottonSongToMap(s *db.Song) map[string]any {
 	ct := "audio/mpeg"
 	switch strings.ToLower(s.Fmt) {
