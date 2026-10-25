@@ -122,6 +122,18 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
+
+	// 【新增】图片接口直接放行，免去认证拦截，避免客户端或测试时因 Token 错误拿不到图
+	if p == "getArtistImage" || p == "getCoverArt" {
+		switch p {
+		case "getArtistImage":
+			h.getArtistImage(w, r, u)
+		case "getCoverArt":
+			h.getCoverArt(w, r, u)
+		}
+		return
+	}
+
 	if p == "ping" {
 		if u != "" && !auth.VerifySubsonic(h.DB.DB, u, pw, t, s) {
 			h.writeErr(w, r, 40, "Wrong username or password")
@@ -183,8 +195,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getSimilarSongs(w, r, u, "similarSongs2")
 	case "stream", "download":
 		h.stream(w, r, u)
-	case "getCoverArt":
-		h.getCoverArt(w, r, u)
 	case "getPlaylists":
 		h.getPlaylists(w, r, u)
 	case "getPlaylist":
@@ -203,8 +213,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtistInfo(w, r, u, "artistInfo")
 	case "getArtistInfo2":
 		h.getArtistInfo(w, r, u, "artistInfo2")
-	case "getArtistImage":
-		h.getArtistImage(w, r, u)
 	case "scrobble":
 		h.scrobble(w, r, u)
 	case "search2":
@@ -1188,7 +1196,8 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 【修复】彻底剥离客户端可能带的各种前缀，只留纯 ID
+	// 彻底剥离客户端可能带的各种前缀，只留纯 ID
+	rawID := id
 	id = strings.TrimPrefix(id, "mf-")
 	id = strings.TrimPrefix(id, "al-")
 	id = strings.TrimPrefix(id, "ar-")
@@ -1222,11 +1231,11 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 
 	// 如果原本就有前缀，根据前缀推断 type
 	if typ == "" {
-		if strings.HasPrefix(r.URL.Query().Get("id"), "ar-") {
+		if strings.HasPrefix(rawID, "ar-") {
 			typ = "artist"
-		} else if strings.HasPrefix(r.URL.Query().Get("id"), "al-") {
+		} else if strings.HasPrefix(rawID, "al-") {
 			typ = "album"
-		} else if strings.HasPrefix(r.URL.Query().Get("id"), "pl-") {
+		} else if strings.HasPrefix(rawID, "pl-") {
 			typ = "playlist"
 		}
 	}
@@ -1234,7 +1243,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
-			name = h.resolveArtistName(id, user) // 这里传入的 id 已经是纯 MD5 或纯 8位
+			name = h.resolveArtistName(id, user)
 		}
 		
 		// 1. 优先去网易云拉取高清歌手写真
@@ -1242,6 +1251,8 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 				proxyImage(w, d.Pic)
 				return
+			} else if err != nil {
+				log.Printf("[coverart] NCM GetArtistDetail err for %s: %v", name, err)
 			}
 		}
 		
@@ -1253,7 +1264,24 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			}
 		}
 		
-		// 3. 实在没图，返回默认的灰色头像
+		// 3. 最终兜底：去数据库里找该歌手的第一首有封面的歌，用这首歌的专辑封面代替
+		songs := h.visibleSongs(user)
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
+					if s.CoverPath != "" {
+						if size > 0 {
+							h.serveThumb(w, r, s.CoverPath, size)
+						} else {
+							serveLocalCover(w, r, s.CoverPath)
+						}
+						return
+					}
+				}
+			}
+		}
+		
+		// 4. 实在没图，返回默认图
 		serveDefaultCover(w)
 		return
 	}
@@ -1801,6 +1829,8 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 			proxyImage(w, d.Pic)
 			return
+		} else if err != nil {
+			log.Printf("[getArtistImage] NCM error for %s: %v", name, err)
 		}
 	}
 
@@ -1810,6 +1840,20 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 			return
 		}
 	}
+	
+	// 兜底：用本地专辑封面代替歌手图，避免显示透明八角形
+	songs := h.visibleSongs(user)
+	for _, s := range songs {
+		for _, n := range splitArtists(s.Artist) {
+			if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
+				if s.CoverPath != "" {
+					serveLocalCover(w, r, s.CoverPath)
+					return
+				}
+			}
+		}
+	}
+	
 	serveDefaultCover(w)
 }
 
