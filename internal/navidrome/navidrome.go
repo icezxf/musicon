@@ -287,6 +287,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
+			"coverArt":              id, // 告知客户端去拉取歌手封面
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
 			"genres":                nil,
@@ -339,6 +340,7 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
+		"coverArt":              id, // 告知客户端去拉取歌手封面
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
 		"genres":                nil,
@@ -463,12 +465,28 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 
 	songs := h.visibleSongs(user)
 	albumIDFilter := r.URL.Query().Get("album_id")
+	artistIDFilter := r.URL.Query().Get("artist_id") // 接收歌手过滤参数
 	titleFilter := strings.ToLower(r.URL.Query().Get("title"))
 
 	var filtered []db.Song
 	for _, s := range songs {
 		album, artist, _, title, _ := cleanSongMeta(s)
+		
+		// 专辑过滤
 		if albumIDFilter != "" && genID(album+"|"+artist) != albumIDFilter { continue }
+		
+		// 歌手过滤（解决歌手详情页展示全量歌曲的问题）
+		if artistIDFilter != "" {
+			matched := false
+			for _, n := range splitArtists(artist) {
+				if genID(n) == artistIDFilter {
+					matched = true
+					break
+				}
+			}
+			if !matched { continue }
+		}
+		
 		if titleFilter != "" && !strings.Contains(strings.ToLower(title), titleFilter) { continue }
 		filtered = append(filtered, s)
 	}
@@ -514,7 +532,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"id": s.ID, "path": s.Path, "title": title, "album": album,
 		"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 		"albumId": aID, 
-		"coverArt": aID, 
+		"coverArt": aID, // 歌曲封面使用专辑 ID
 		"hasCoverArt": s.CoverPath != "", "trackNumber": maxNum(1, s.TrackNumber),
 		"discNumber": maxNum(1, s.DiscNumber), "year": s.Year, "date": strconv.Itoa(s.Year),
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix,
