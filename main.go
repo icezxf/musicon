@@ -22,6 +22,7 @@ import (
 	"github.com/icezxf/musicon-go/internal/ncm"
 	"github.com/icezxf/musicon-go/internal/settings"
 	"github.com/icezxf/musicon-go/internal/subsonic"
+	"github.com/icezxf/musicon-go/internal/navidrome"
 )
 
 func main() {
@@ -83,6 +84,8 @@ func main() {
 
 	api.New(holder, alistMgr, lxClient, ncmClient, cfg, settingsMgr, &bgWG).Mount(mux)
 	subsonic.New(holder, alistMgr, lxClient, ncmClient, cfg).Mount(mux)
+	// 挂载 Navidrome 原生接口，专供 Navidrome 客户端使用
+	navidrome.New(holder, cfg).Mount(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
