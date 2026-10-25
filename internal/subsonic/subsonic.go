@@ -1188,6 +1188,13 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
+	// ================= 新增：兼容 Navidrome 原生客户端的前缀 =================
+	if strings.HasPrefix(id, "mf-") {
+		id = strings.TrimPrefix(id, "mf-")
+		typ = "song"
+	}
+	// ======================================================================
+
 	if strings.HasPrefix(id, "al-al-") {
 		id = strings.TrimPrefix(id, "al-")
 	}
@@ -1256,6 +1263,31 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
+
+	// ================= 新增：支持 Navidrome 的 32 位 MD5 专辑/歌手 ID =================
+	rawID := id
+	if strings.HasPrefix(rawID, "al-") {
+		rawID = strings.TrimPrefix(rawID, "al-")
+	} else if strings.HasPrefix(rawID, "ar-") {
+		rawID = strings.TrimPrefix(rawID, "ar-")
+	}
+	// 匹配 32 位 MD5 专辑
+	for _, s := range songs {
+		ndID := fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist)))
+		if ndID == rawID && s.CoverPath != "" {
+			return s.CoverPath
+		}
+	}
+	// 匹配 32 位 MD5 歌手
+	for _, s := range songs {
+		for _, name := range splitArtists(s.Artist) {
+			ndID := fmt.Sprintf("%x", md5.Sum([]byte(name)))
+			if ndID == rawID && s.CoverPath != "" {
+				return s.CoverPath
+			}
+		}
+	}
+	// =========================================================================
 
 	for _, s := range songs {
 		if s.ID == id {
@@ -1793,6 +1825,9 @@ func (h *Handler) resolveArtistName(id, user string) string {
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
 			newCache[artistID(name)] = name
+			// ================= 新增：支持 Navidrome 的 32 位 MD5 歌手 ID =================
+			newCache[fmt.Sprintf("%x", md5.Sum([]byte(name)))] = name
+			// =========================================================================
 			newCache[name] = name
 		}
 	}
