@@ -474,12 +474,57 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	return indexes
 }
 
-func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
-	indexes := h.buildArtistGroups(h.visibleSongs(user))
+func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string) {
+	id := r.URL.Query().Get("id")
+	songs := h.visibleSongs(user)
+	type albumAgg struct {
+		name   string
+		artist string
+		count  int
+		dur    int
+	}
+	albums := map[string]*albumAgg{}
+	artistName := ""
+	for _, s := range songs {
+		names := splitArtists(s.Artist)
+		matched := false
+		for _, n := range names {
+			if artistID(n) == id {
+				artistName = n
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		k := s.Album + "|" + s.Artist
+		if _, ok := albums[k]; !ok {
+			albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
+		}
+		albums[k].count++
+		albums[k].dur += s.Dur
+	}
+	if artistName == "" {
+		h.writeErr(w, r, 70, "Artist not found")
+		return
+	}
+	
+	var albumList []map[string]any
+	totalSongCount := 0 // [新增] 统计总歌曲数
+	for _, a := range albums {
+		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
+		totalSongCount += a.count // [新增] 累加
+	}
+	
 	h.writeOK(w, r, map[string]any{
-		"artists": map[string]any{
-			"@ignoredArticles": "The El La Los Las Le Les",
-			"index":            indexes,
+		"artist": map[string]any{
+			"@id":         id,
+			"@name":       artistName,
+			"@albumCount": len(albumList),
+			"@songCount":  totalSongCount, // [核心修复] 补上标准字段
+			"@coverArt":   id,
+			"album":       albumList,
 		},
 	})
 }
