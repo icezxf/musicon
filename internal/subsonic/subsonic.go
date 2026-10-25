@@ -189,7 +189,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case "getTopSongs":
 		h.getTopSongs(w, r, u)
 	case "getSongs":
-		h.getSongs(w, r, u)
+		h.getSongs(w, r, u) // 【已修复】补上了这个函数
 	case "getSimilarSongs":
 		h.getSimilarSongs(w, r, u, "similarSongs")
 	case "getSimilarSongs2":
@@ -916,6 +916,45 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request, user strin
 	}
 	h.writeOK(w, r, map[string]any{
 		"topSongs": map[string]any{"song": out},
+	})
+}
+
+// 【补充】getSongs 路由调用的实现
+func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
+	genre := r.URL.Query().Get("genre")
+	artist := r.URL.Query().Get("artist")
+	album := r.URL.Query().Get("album")
+	
+	songs := h.visibleSongs(user)
+	var filtered []db.Song
+	for _, s := range songs {
+		if genre != "" && !strings.EqualFold(s.Genre, genre) {
+			continue
+		}
+		if artist != "" {
+			found := false
+			for _, n := range splitArtists(s.Artist) {
+				if strings.EqualFold(n, artist) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if album != "" && !strings.EqualFold(s.Album, album) {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	
+	var out []map[string]any
+	for i := range filtered {
+		out = append(out, songToMap(&filtered[i]))
+	}
+	h.writeOK(w, r, map[string]any{
+		"songs": map[string]any{"song": out},
 	})
 }
 
