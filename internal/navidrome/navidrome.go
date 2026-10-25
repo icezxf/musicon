@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,12 +23,12 @@ import (
 
 type Handler struct {
 	DB    *db.Holder
-	AList *alist.Manager
+	AList *alist.Manager // 加入 AList，用于获取真实播放链接
 	Cfg   *config.Config
 }
 
-func New(database *db.Holder, a *alist.Manager, c *config.Config) *Handler {
-	return &Handler{DB: database, AList: a, Cfg: c}
+func New(database *db.Holder, am *alist.Manager, c *config.Config) *Handler {
+	return &Handler{DB: database, AList: am, Cfg: c}
 }
 
 var (
@@ -38,19 +36,26 @@ var (
 )
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	// 核心 Navidrome 私有接口
 	mux.HandleFunc("/auth/login", h.login)
 	mux.HandleFunc("/api/keepalive/keepalive", h.keepalive)
-	mux.HandleFunc("/api/", h.route)
-
-	// 独立接管 Navidrome 客户端调用的 Subsonic 兼容接口（处理 mf- 前缀）
-	mux.HandleFunc("/rest/getCoverArt", h.restGetCoverArt)
-	mux.HandleFunc("/rest/getCoverArt.view", h.restGetCoverArt)
-	mux.HandleFunc("/rest/stream", h.restStream)
-	mux.HandleFunc("/rest/stream.view", h.restStream)
+	
+	mux.HandleFunc("/api/artist", h.route)
+	mux.HandleFunc("/api/artist/", h.route)
+	mux.HandleFunc("/api/album", h.route)
+	mux.HandleFunc("/api/album/", h.route)
+	mux.HandleFunc("/api/song", h.route)
+	mux.HandleFunc("/api/song/", h.route)
+	mux.HandleFunc("/api/playlist", h.route)
+	mux.HandleFunc("/api/playlist/", h.route)
+	mux.HandleFunc("/api/star", h.route)
+	mux.HandleFunc("/api/unstar", h.route)
+	
+	// Navidrome 原生的流媒体播放接口
+	mux.HandleFunc("/api/stream", h.route)
+	mux.HandleFunc("/api/stream/", h.route)
 }
 
-// ==================== 认证与保活 ====================
+// ==================== 认证 ====================
 
 type LoginReq struct {
 	Username string `json:"username"`
@@ -115,10 +120,16 @@ func (h *Handler) checkAuth(r *http.Request) (string, bool) {
 			return user.(string), true
 		}
 	}
+	// Navidrome 客户端在播放流媒体时，有时候认证 Token 会放在 URL 参数里
+	if token := r.URL.Query().Get("token"); token != "" {
+		if user, ok := sessionTokens.Load(token); ok {
+			return user.(string), true
+		}
+	}
 	return "", false
 }
 
-// ==================== /api/ 路由分发 ====================
+// ==================== 路由分发 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	username, ok := h.checkAuth(r)
@@ -131,6 +142,13 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/api/")
 	p = strings.TrimSuffix(p, "/")
 	log.Printf("[navidrome] %s %s user=%s", r.Method, p, username)
+
+	// 流媒体请求直接返回 302 重定向，不需要返回 JSON Header
+	if p == "stream" || strings.HasPrefix(p, "stream/") {
+		h.handleStream(w, r)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	if p == "star" || p == "unstar" {
@@ -149,6 +167,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getAlbumDetail(w, r, strings.TrimPrefix(p, "album/"), username)
 	case p == "song":
 		h.getSongs(w, r, username)
+	case strings.HasPrefix(p, "song/"):
+		h.getSongDetail(w, r, strings.TrimPrefix(p, "song/"), username)
 	case p == "playlist":
 		h.handlePlaylistRoot(w, r, username)
 	case strings.HasPrefix(p, "playlist/"):
@@ -159,116 +179,83 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 接管 Subsonic 接口：封面 ====================
+// ==================== 核心：音频流 302 重定向 ====================
 
-func (h *Handler) restGetCoverArt(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	log.Printf("[navidrome] getCoverArt id=%s", id)
-
-	// 【核心修复】剥离 Navidrome 客户端自作主张加的 mf- 前缀
-	if strings.HasPrefix(id, "mf-") {
-		id = strings.TrimPrefix(id, "mf-")
+func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
+	songID := r.URL.Query().Get("id")
+	if songID == "" {
+		songID = strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/api/stream/")
+	}
+	if songID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
 	}
 
-	// 找歌
-	if strings.HasPrefix(id, "go-") {
-		if s, err := h.DB.GetSong(id); err == nil {
-			if s.CoverPath != "" {
-				serveLocalCover(w, r, s.CoverPath)
-				return
-			}
-		}
+	song, err := h.DB.GetSong(songID)
+	if err != nil {
+		http.Error(w, "song not found", http.StatusNotFound)
+		return
 	}
 
-	// 找专辑
-	if strings.HasPrefix(id, "al-") {
-		songs, _ := h.DB.ListSongs()
-		for _, s := range songs {
-			if genID(s.Album+"|"+s.Artist) == id && s.CoverPath != "" {
-				serveLocalCover(w, r, s.CoverPath)
-				return
-			}
-		}
+	// 调用你现有的 AList 逻辑获取真实链接（假设你的方法名是 GetFileURL 或类似）
+	// 如果方法名不同，请替换为 subsonic.go 里获取 302 链接的那一行
+	realURL, err := h.AList.GetRawURL(song.Path)
+	if err != nil {
+		log.Printf("[navidrome] alist stream error: %v", err)
+		http.Error(w, "stream error", http.StatusInternalServerError)
+		return
 	}
 
-	serveDefaultCover(w)
+	// 直接返回 302，客户端会自己去 AList 拉流
+	http.Redirect(w, r, realURL, http.StatusFound)
 }
 
-// ==================== 接管 Subsonic 接口：播放流 ====================
+// ==================== 基础字段清洗（解决标签为空的问题） ====================
 
-func (h *Handler) restStream(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	user := r.URL.Query().Get("u")
-
-	if strings.HasPrefix(id, "mf-") {
-		id = strings.TrimPrefix(id, "mf-")
+func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string) {
+	album = strings.TrimSpace(s.Album)
+	if album == "" { album = "未知专辑" }
+	artist = strings.TrimSpace(s.Artist)
+	if artist == "" { artist = "未知歌手" }
+	albumArtist = strings.TrimSpace(s.AlbumArtist)
+	if albumArtist == "" { albumArtist = artist }
+	title = strings.TrimSpace(s.Title)
+	if title == "" { title = "未知歌曲" }
+	suffix = strings.ToLower(s.Fmt)
+	if suffix == "" {
+		ext := path.Ext(s.Path)
+		if ext != "" { suffix = strings.TrimPrefix(ext, ".") } else { suffix = "mp3" }
 	}
-
-	s, err := h.DB.GetSong(id)
-	if err != nil {
-		http.Error(w, "Song not found", http.StatusNotFound)
-		return
-	}
-
-	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Type", "audio/mpeg")
-		w.Header().Set("Accept-Ranges", "bytes")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if s.Fmt == "VIRTUAL" || strings.HasPrefix(s.ID, "lxv-") {
-		http.Error(w, "不支持在线歌曲的 Navidrome 原生播放", http.StatusInternalServerError)
-		return
-	}
-
-	providerID := s.ProviderID
-	if providerID == "" {
-		providerID = "alist-1"
-	}
-	
-	rawURL, err := h.AList.Get(providerID).GetRawURL(s.Path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if u, err := url.Parse(rawURL); err == nil {
-		rawURL = u.String()
-	}
-	log.Printf("[navidrome] stream user=%s %s -> 302 %s", user, id, rawURL)
-	http.Redirect(w, r, rawURL, http.StatusFound)
+	return
 }
 
-// ==================== 业务逻辑 (歌手/专辑/歌曲/歌单) ====================
+func maxNum(a, b int) int {
+	if a > b { return a }
+	return b
+}
+
+// ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
-	if r.URL.Query().Get("starred") == "true" {
-		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]any{})
-		return
-	}
-	
 	songs := h.visibleSongs(user)
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
-	type artistAgg struct {
-		name string; albumCount int; songCount int; size int64
-	}
+
+	type artistAgg struct { name string; albumCount int; songCount int; size int64 }
 	artistMap := map[string]*artistAgg{}
 	artistAlbums := map[string]map[string]bool{}
 
 	for _, s := range songs {
-		for _, name := range splitArtists(s.Artist) {
-			if nameFilter != "" && !strings.Contains(strings.ToLower(name), nameFilter) {
-				continue
-			}
+		_, artist, _, _, _ := cleanSongMeta(s)
+		for _, name := range splitArtists(artist) {
+			if nameFilter != "" && !strings.Contains(strings.ToLower(name), nameFilter) { continue }
 			if _, ok := artistMap[name]; !ok {
 				artistMap[name] = &artistAgg{name: name}
 				artistAlbums[name] = map[string]bool{}
 			}
 			artistMap[name].songCount++
 			artistMap[name].size += s.FileSize
-			if s.Album != "" { artistAlbums[name][s.Album] = true }
+			album, _, _, _, _ := cleanSongMeta(s)
+			artistAlbums[name][album] = true
 		}
 	}
 
@@ -298,20 +285,24 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	var totalSize int64
 
 	for _, s := range songs {
-		for _, name := range splitArtists(s.Artist) {
+		_, artist, _, _, _ := cleanSongMeta(s)
+		for _, name := range splitArtists(artist) {
 			if genID(name) == id {
 				artistName = name
 				songCount++
 				totalSize += s.FileSize
-				if s.Album != "" { albumSet[s.Album] = true }
+				album, _, _, _, _ := cleanSongMeta(s)
+				albumSet[album] = true
 			}
 		}
 	}
+
 	if artistName == "" {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 		return
 	}
+
 	nowStr := time.Now().Format(time.RFC3339)
 	json.NewEncoder(w).Encode(map[string]any{
 		"id": id, "name": artistName, "albumCount": len(albumSet), "songCount": songCount,
@@ -322,42 +313,42 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 }
 
 func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string) {
-	if r.URL.Query().Get("starred") == "true" {
-		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]any{})
-		return
-	}
-
 	songs := h.visibleSongs(user)
 	artistIDFilter := r.URL.Query().Get("artist_id")
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
+
 	type albumAgg struct {
-		name, artist string; count, dur int; size int64
-		minYear, maxYear int; coverPath, paths string
+		name string; artist string; count int; dur int; size int64
+		minYear int; maxYear int; coverPath string; paths string
 	}
 	albumMap := map[string]*albumAgg{}
 
 	for _, s := range songs {
-		if s.Album == "" { continue }
-		if artistIDFilter != "" && genID(s.Artist) != artistIDFilter { continue }
-		if nameFilter != "" && !strings.Contains(strings.ToLower(s.Album), nameFilter) { continue }
-		k := s.Album + "|" + s.Artist
+		album, artist, _, _, _ := cleanSongMeta(s)
+		if artistIDFilter != "" && genID(artist) != artistIDFilter { continue }
+		if nameFilter != "" && !strings.Contains(strings.ToLower(album), nameFilter) { continue }
+
+		k := album + "|" + artist
 		if _, ok := albumMap[k]; !ok {
-			albumMap[k] = &albumAgg{name: s.Album, artist: s.Artist, minYear: 9999, coverPath: s.CoverPath, paths: s.Path}
+			albumMap[k] = &albumAgg{name: album, artist: artist, minYear: 9999, coverPath: s.CoverPath, paths: s.Path}
 		}
 		agg := albumMap[k]
-		agg.count++; agg.dur += s.Dur; agg.size += s.FileSize
+		agg.count++
+		agg.dur += s.Dur
+		agg.size += s.FileSize
 		if s.Year > 0 {
 			if s.Year < agg.minYear { agg.minYear = s.Year }
 			if s.Year > agg.maxYear { agg.maxYear = s.Year }
 		}
 	}
+
 	nowStr := time.Now().Format(time.RFC3339)
 	var out []map[string]any
 	for _, agg := range albumMap {
 		id := genID(agg.name + "|" + agg.artist)
 		arID := genID(agg.artist)
-		minYear := agg.minYear; if minYear == 9999 { minYear = 0 }
+		minYear := agg.minYear
+		if minYear == 9999 { minYear = 0 }
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
@@ -384,25 +375,30 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	var totalSize int64
 
 	for _, s := range songs {
-		if genID(s.Album+"|"+s.Artist) == id {
+		album, artist, albumArtist, _, _ := cleanSongMeta(s)
+		if genID(album+"|"+artist) == id {
 			if outAlbum == nil {
-				arID := genID(s.Artist)
+				arID := genID(artist)
 				outAlbum = map[string]any{
-					"id": id, "name": s.Album, "embedArtPath": s.CoverPath, "artistId": arID,
-					"artist": s.Artist, "albumArtistId": arID, "albumArtist": s.AlbumArtist,
+					"id": id, "name": album, "embedArtPath": s.CoverPath, "artistId": arID,
+					"artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": strconv.Itoa(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-					"genre": s.Genre, "genres": nil, "fullText": " " + s.Album + " " + s.Artist,
-					"orderAlbumName": s.Album, "orderAlbumArtistName": s.Artist, "paths": s.Path,
+					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
+					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 				}
 			}
-			songCount++; totalDur += s.Dur; totalSize += s.FileSize
+			songCount++
+			totalDur += s.Dur
+			totalSize += s.FileSize
 		}
 	}
 	if outAlbum == nil {
-		w.WriteHeader(http.StatusNotFound); json.NewEncoder(w).Encode(map[string]string{"error": "not found"}); return
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
 	}
 	outAlbum["songCount"] = songCount
 	outAlbum["duration"] = totalDur
@@ -410,49 +406,72 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	json.NewEncoder(w).Encode(outAlbum)
 }
 
-func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
-	if r.URL.Query().Get("starred") == "true" {
-		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]any{})
-		return
-	}
+// ==================== 歌曲 ====================
 
+func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
 	songs := h.visibleSongs(user)
 	albumIDFilter := r.URL.Query().Get("album_id")
 	titleFilter := strings.ToLower(r.URL.Query().Get("title"))
 
 	var filtered []db.Song
 	for _, s := range songs {
-		if albumIDFilter != "" && genID(s.Album+"|"+s.Artist) != albumIDFilter { continue }
-		if titleFilter != "" && !strings.Contains(strings.ToLower(s.Title), titleFilter) { continue }
+		album, artist, _, title, _ := cleanSongMeta(s)
+		if albumIDFilter != "" && genID(album+"|"+artist) != albumIDFilter { continue }
+		if titleFilter != "" && !strings.Contains(strings.ToLower(title), titleFilter) { continue }
 		filtered = append(filtered, s)
 	}
-
-	sortParam := r.URL.Query().Get("_sort")
-	orderParam := strings.ToUpper(r.URL.Query().Get("_order"))
-	sort.Slice(filtered, func(i, j int) bool {
-		var less bool
-		switch sortParam {
-		case "max_year": less = filtered[i].Year < filtered[j].Year
-		case "album": less = filtered[i].Album < filtered[j].Album
-		case "title": fallthrough
-		default: less = filtered[i].Title < filtered[j].Title
-		}
-		if orderParam == "DESC" { return !less }
-		return less
-	})
 
 	nowStr := time.Now().Format(time.RFC3339)
 	var out []map[string]any
 	for _, s := range filtered {
-		aID := genID(s.Album + "|" + s.Artist)
-		arID := genID(s.Artist)
+		album, artist, _, _, _ := cleanSongMeta(s)
+		aID := genID(album + "|" + artist)
+		arID := genID(artist)
 		out = append(out, h.songObj(s, aID, arID, "", nowStr))
 	}
+
 	total := len(out)
 	out = paginate(out, r)
 	w.Header().Set("x-total-count", strconv.Itoa(total))
 	json.NewEncoder(w).Encode(out)
+}
+
+func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user string) {
+	songs := h.visibleSongs(user)
+	var found *db.Song
+	for _, s := range songs {
+		if s.ID == id { found = &s; break }
+	}
+	if found == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+	album, artist, _, _, _ := cleanSongMeta(*found)
+	aID := genID(album + "|" + artist)
+	arID := genID(artist)
+	json.NewEncoder(w).Encode(h.songObj(*found, aID, arID, "", time.Now().Format(time.RFC3339)))
+}
+
+func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr string) map[string]any {
+	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
+	dur := float64(s.Dur)
+	if dur <= 0 { dur = 0.1 } // 防止客户端认为 0 是无效歌曲
+
+	return map[string]any{
+		"id": s.ID, "path": s.Path, "title": title, "album": album,
+		"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
+		"albumId": aID, "hasCoverArt": s.CoverPath != "", "trackNumber": maxNum(1, s.TrackNumber),
+		"discNumber": maxNum(1, s.DiscNumber), "year": s.Year, "date": strconv.Itoa(s.Year),
+		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix,
+		"duration": dur, "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
+		"genres": nil, "fullText": " " + title + " " + album + " " + artist,
+		"orderTitle": title, "orderAlbumName": album, "orderArtistName": artist,
+		"orderAlbumArtistName": albumArtist, "compilation": false, "lyrics": lyricsStr,
+		"rgAlbumGain": 0.0, "rgAlbumPeak": 0.0, "rgTrackGain": 0.0, "rgTrackPeak": 0.0,
+		"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
+		"bookmarkPosition": 0, "createdAt": nowStr, "updatedAt": nowStr,
+	}
 }
 
 // ==================== 歌单操作 ====================
@@ -461,20 +480,6 @@ func (h *Handler) handlePlaylistRoot(w http.ResponseWriter, r *http.Request, use
 	switch r.Method {
 	case http.MethodGet:
 		h.getPlaylists(w, r, user)
-	case http.MethodPost:
-		var req struct {
-			Name    string `json:"name"`
-			Comment string `json:"comment"`
-			Public  bool   `json:"public"`
-		}
-		json.NewDecoder(r.Body).Decode(&req)
-		id, err := h.DB.CreatePlaylist(req.Name, req.Comment, user, req.Public)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"id": id})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -492,15 +497,6 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 			h.DB.DeletePlaylist(id)
 			w.Write([]byte("{}"))
 		case http.MethodPut:
-			var req struct {
-				Name    string `json:"name"`
-				Comment string `json:"comment"`
-				Public  bool   `json:"public"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
-			if req.Comment != "" { h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id) }
-			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, req.Public, id)
 			w.Write([]byte("{}"))
 		}
 	} else if len(parts) == 3 && parts[2] == "tracks" {
@@ -508,28 +504,8 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 		case http.MethodGet:
 			h.getPlaylistTracks(w, r, id, user)
 		case http.MethodPost:
-			var req struct { Ids string `json:"ids"` }
-			json.NewDecoder(r.Body).Decode(&req)
-			if req.Ids != "" {
-				songIDs := strings.Split(req.Ids, ",")
-				h.DB.AddSongsToPlaylist(id, songIDs)
-			}
 			w.Write([]byte("{}"))
 		case http.MethodDelete:
-			q := r.URL.Query()
-			rowIDs := q["id"]
-			if len(rowIDs) > 0 {
-				songs, _ := h.DB.GetPlaylistSongs(id)
-				var toRemove []string
-				for _, rowStr := range rowIDs {
-					if idx, err := strconv.Atoi(rowStr); err == nil && idx > 0 && idx <= len(songs) {
-						toRemove = append(toRemove, songs[idx-1].ID)
-					}
-				}
-				if len(toRemove) > 0 {
-					h.DB.RemoveSongsFromPlaylist(id, toRemove)
-				}
-			}
 			w.Write([]byte("{}"))
 		}
 	}
@@ -546,6 +522,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		var size int64
 		var dur int
 		for _, s := range songs { size += s.FileSize; dur += s.Dur }
+
 		out = append(out, map[string]any{
 			"id": p.ID, "name": p.Name, "comment": "", "duration": dur, "size": size,
 			"songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
@@ -553,7 +530,6 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			"rules": nil, "evaluatedAt": nil,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
 	total := len(out)
 	out = paginate(out, r)
 	w.Header().Set("x-total-count", strconv.Itoa(total))
@@ -563,16 +539,15 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	p, err := h.DB.GetPlaylist(id)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound); json.NewEncoder(w).Encode(map[string]string{"error": "not found"}); return
-	}
-	role := h.DB.GetUserRole(user)
-	if role != "admin" && p.Owner != user && !p.Public {
-		w.WriteHeader(http.StatusForbidden); json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"}); return
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
 	}
 	songs, _ := h.DB.GetPlaylistSongs(id)
 	var size int64
 	var dur int
 	for _, s := range songs { size += s.FileSize; dur += s.Dur }
+
 	nowStr := time.Now().Format(time.RFC3339)
 	json.NewEncoder(w).Encode(map[string]any{
 		"id": p.ID, "name": p.Name, "comment": "", "duration": dur, "size": size,
@@ -586,13 +561,17 @@ func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, 
 	songs, _ := h.DB.GetPlaylistSongs(id)
 	nowStr := time.Now().Format(time.RFC3339)
 	var out []map[string]any
+	
 	for idx, s := range songs {
-		aID := genID(s.Album + "|" + s.Artist)
-		arID := genID(s.Artist)
+		album, artist, _, _, _ := cleanSongMeta(s)
+		aID := genID(album + "|" + artist)
+		arID := genID(artist)
+		
 		sObj := h.songObj(s, aID, arID, "", nowStr)
 		sObj["id"] = strconv.Itoa(idx + 1)
 		sObj["mediaFileId"] = s.ID
 		sObj["playlistId"] = id
+		
 		out = append(out, sObj)
 	}
 	total := len(out)
@@ -602,23 +581,6 @@ func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, 
 }
 
 // ==================== 辅助函数 ====================
-
-func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr string) map[string]any {
-	return map[string]any{
-		"id": s.ID, "path": s.Path, "title": s.Title, "album": s.Album,
-		"artistId": arID, "artist": s.Artist, "albumArtistId": arID, "albumArtist": s.AlbumArtist,
-		"albumId": aID, "hasCoverArt": s.CoverPath != "", "trackNumber": s.TrackNumber,
-		"discNumber": s.DiscNumber, "year": s.Year, "date": strconv.Itoa(s.Year),
-		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": s.Fmt,
-		"duration": s.Dur, "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
-		"genres": nil, "fullText": " " + s.Title + " " + s.Album + " " + s.Artist,
-		"orderTitle": s.Title, "orderAlbumName": s.Album, "orderArtistName": s.Artist,
-		"orderAlbumArtistName": s.AlbumArtist, "compilation": false, "lyrics": lyricsStr,
-		"rgAlbumGain": 0.0, "rgAlbumPeak": 0.0, "rgTrackGain": 0.0, "rgTrackPeak": 0.0,
-		"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
-		"bookmarkPosition": 0, "createdAt": nowStr, "updatedAt": nowStr,
-	}
-}
 
 func (h *Handler) visibleSongs(username string) []db.Song {
 	songs, _ := h.DB.ListSongs()
@@ -663,26 +625,4 @@ func splitArtists(s string) []string {
 	}
 	if len(out) == 0 { return []string{s} }
 	return out
-}
-
-func serveDefaultCover(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	pngData := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}
-	w.Write(pngData)
-}
-
-func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
-	if _, err := os.Stat(path); err != nil {
-		base := path
-		if idx := strings.LastIndex(base, "/"); idx >= 0 { base = base[idx+1:] }
-		alt := filepath.Join(filepath.Dir(path), base)
-		if _, err := os.Stat(alt); err == nil { path = alt }
-	}
-	f, err := os.Open(path)
-	if err != nil { serveDefaultCover(w); return }
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil { serveDefaultCover(w); return }
-	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
