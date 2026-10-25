@@ -108,7 +108,6 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// 支持 OpenSubsonic formPost
 	if r.Method == http.MethodPost {
 		r.ParseForm()
 		for k, v := range r.PostForm {
@@ -422,7 +421,7 @@ func (h *Handler) getMusicFolders(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 	artistAlbums := map[string]map[string]bool{}
-	artistSongCount := map[string]int{} // [新增]
+	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		if len(names) == 0 {
@@ -435,7 +434,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			if s.Album != "" {
 				artistAlbums[name][s.Album] = true
 			}
-			artistSongCount[name]++ // [新增]
+			artistSongCount[name]++
 		}
 	}
 	groups := map[string][]map[string]any{}
@@ -452,63 +451,34 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist], // [核心修复] 标准字段
+			"@songCount":  artistSongCount[artist], // 补上标准字段
 			"@coverArt":   artistID(artist),
 		})
 	}
-    // ... 后续代码不变 ...
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var indexes []map[string]any
+	for _, k := range keys {
+		sort.Slice(groups[k], func(i, j int) bool {
+			return groups[k][i]["@name"].(string) < groups[k][j]["@name"].(string)
+		})
+		indexes = append(indexes, map[string]any{
+			"@name":  k,
+			"artist": groups[k],
+		})
+	}
+	return indexes
+}
 
-func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string) {
-	id := r.URL.Query().Get("id")
-	songs := h.visibleSongs(user)
-	type albumAgg struct {
-		name   string
-		artist string
-		count  int
-		dur    int
-	}
-	albums := map[string]*albumAgg{}
-	artistName := ""
-	for _, s := range songs {
-		names := splitArtists(s.Artist)
-		matched := false
-		for _, n := range names {
-			if artistID(n) == id {
-				artistName = n
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			continue
-		}
-		k := s.Album + "|" + s.Artist
-		if _, ok := albums[k]; !ok {
-			albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
-		}
-		albums[k].count++
-		albums[k].dur += s.Dur
-	}
-	if artistName == "" {
-		h.writeErr(w, r, 70, "Artist not found")
-		return
-	}
-	
-	var albumList []map[string]any
-	totalSongCount := 0 // [新增] 统计总歌曲数
-	for _, a := range albums {
-		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
-		totalSongCount += a.count // [新增] 累加
-	}
-	
+func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
+	indexes := h.buildArtistGroups(h.visibleSongs(user))
 	h.writeOK(w, r, map[string]any{
-		"artist": map[string]any{
-			"@id":         id,
-			"@name":       artistName,
-			"@albumCount": len(albumList),
-			"@songCount":  totalSongCount, // [核心修复] 补上标准字段
-			"@coverArt":   id,
-			"album":       albumList,
+		"artists": map[string]any{
+			"@ignoredArticles": "The El La Los Las Le Les",
+			"index":            indexes,
 		},
 	})
 }
@@ -559,15 +529,20 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		h.writeErr(w, r, 70, "Artist not found")
 		return
 	}
+	
 	var albumList []map[string]any
+	totalSongCount := 0 // 统计总数
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
+		totalSongCount += a.count
 	}
+	
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
 			"@name":       artistName,
 			"@albumCount": len(albumList),
+			"@songCount":  totalSongCount, // 补上标准字段，解决棉花音乐 0 歌曲
 			"@coverArt":   id,
 			"album":       albumList,
 		},
@@ -941,7 +916,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	
-	// 【核心容错】对 URL 进行转义，防止空格和中文导致客户端解析失败
+	// 对 URL 进行转义，防止空格和中文导致客户端无法跳转
 	if u, err := url.Parse(rawURL); err == nil {
 		rawURL = u.String()
 		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
@@ -951,7 +926,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
-	// 维持标准 302 跳转
+	// 原生标准 302 跳转
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
