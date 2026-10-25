@@ -85,7 +85,7 @@ func main() {
 	api.New(holder, alistMgr, lxClient, ncmClient, cfg, settingsMgr, &bgWG).Mount(mux)
 	subsonic.New(holder, alistMgr, lxClient, ncmClient, cfg).Mount(mux)
 	// 挂载 Navidrome 原生接口，专供 Navidrome 客户端使用
-	navidrome.New(holder, cfg).Mount(mux)
+	navidrome.New(holder, alistMgr, cfg).Mount(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
