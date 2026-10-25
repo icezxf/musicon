@@ -36,7 +36,18 @@ var (
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/login", h.login)
 	mux.HandleFunc("/api/keepalive/keepalive", h.keepalive)
-	mux.HandleFunc("/api/", h.route)
+	
+	// 精确注册 Navidrome 特有的子路径，避免与 api.go 的 /api/ 发生冲突崩溃
+	mux.HandleFunc("/api/artist", h.route)
+	mux.HandleFunc("/api/artist/", h.route)
+	mux.HandleFunc("/api/album", h.route)
+	mux.HandleFunc("/api/album/", h.route)
+	mux.HandleFunc("/api/song", h.route)
+	mux.HandleFunc("/api/song/", h.route)
+	mux.HandleFunc("/api/playlist", h.route)
+	mux.HandleFunc("/api/playlist/", h.route)
+	mux.HandleFunc("/api/star", h.route)
+	mux.HandleFunc("/api/unstar", h.route)
 }
 
 // ==================== 认证 ====================
