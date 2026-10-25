@@ -1859,10 +1859,16 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	ql := strings.ToLower(q)
 	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
 	
-	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
-	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
-	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
-	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
+	// 【核心修复】补齐缺失的字符串变量声明
+	songCountStr := r.URL.Query().Get("songCount")
+	songOffsetStr := r.URL.Query().Get("songOffset")
+	artistCountStr := r.URL.Query().Get("artistCount")
+	albumCountStr := r.URL.Query().Get("albumCount")
+
+	songCount, _ := strconv.Atoi(songCountStr)
+	songOffset, _ := strconv.Atoi(songOffsetStr)
+	artistCount, _ := strconv.Atoi(artistCountStr)
+	albumCount, _ := strconv.Atoi(albumCountStr)
 	
 	songs := h.visibleSongs(user)
 	
@@ -1888,7 +1894,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 			}
 		}
 		
-		// 【核心修复】强行塞满它的本地库，解决歌曲数为 0 的问题
+		// 强行塞满它的本地库，解决歌曲数为 0 的问题
 		if all {
 			matchedSongs = append(matchedSongs, songToMap(s))
 		} else if songCount > 0 || songCountStr == "" {
