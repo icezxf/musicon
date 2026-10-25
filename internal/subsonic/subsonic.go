@@ -108,6 +108,7 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
+	// OpenSubsonic formPost 扩展支持
 	if r.Method == http.MethodPost {
 		r.ParseForm()
 		for k, v := range r.PostForm {
@@ -175,6 +176,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getRandomSongs(w, r, u)
 	case "getTopSongs":
 		h.getTopSongs(w, r, u)
+	case "getSongs":
+		h.getSongs(w, r, u)
 	case "getSimilarSongs":
 		h.getSimilarSongs(w, r, u, "similarSongs")
 	case "getSimilarSongs2":
@@ -453,7 +456,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist], // 标准字段
+			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -507,6 +510,11 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	}
 	albums := map[string]*albumAgg{}
 	artistName := ""
+	var artistSongs []map[string]any
+
+	// 判断是否为棉花音乐
+	isPureMusic := r.URL.Query().Get("c") == "PureMusic"
+
 	for _, s := range songs {
 		names := splitArtists(s.Artist)
 		matched := false
@@ -520,6 +528,10 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		if !matched {
 			continue
 		}
+
+		// 特供精简版，极致防崩溃
+		artistSongs = append(artistSongs, cottonSongToMap(&s))
+
 		k := s.Album + "|" + s.Artist
 		if _, ok := albums[k]; !ok {
 			albums[k] = &albumAgg{name: s.Album, artist: s.Artist}
@@ -527,6 +539,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		albums[k].count++
 		albums[k].dur += s.Dur
 	}
+	
 	if artistName == "" {
 		h.writeErr(w, r, 70, "Artist not found")
 		return
@@ -539,15 +552,22 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 		totalSongCount += a.count
 	}
 	
+	artistObj := map[string]any{
+		"@id":         id,
+		"@name":       artistName,
+		"@albumCount": len(albumList),
+		"@songCount":  totalSongCount,
+		"@coverArt":   id,
+		"album":       albumList,
+	}
+
+	// 给棉花音乐强制加上 song 数组
+	if isPureMusic {
+		artistObj["song"] = artistSongs
+	}
+
 	h.writeOK(w, r, map[string]any{
-		"artist": map[string]any{
-			"@id":         id,
-			"@name":       artistName,
-			"@albumCount": len(albumList),
-			"@songCount":  totalSongCount, // 标准字段
-			"@coverArt":   id,
-			"album":       albumList,
-		},
+		"artist": artistObj,
 	})
 }
 
@@ -602,7 +622,6 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 			if !matched {
 				continue
 			}
-			// 直接在歌手目录下返回歌曲列表，兼容老客户端
 			children = append(children, songToMap(&s))
 		}
 		if dirName == "" {
@@ -909,6 +928,44 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request, user strin
 	})
 }
 
+func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
+	genre := r.URL.Query().Get("genre")
+	artist := r.URL.Query().Get("artist")
+	album := r.URL.Query().Get("album")
+	
+	songs := h.visibleSongs(user)
+	var filtered []db.Song
+	for _, s := range songs {
+		if genre != "" && !strings.EqualFold(s.Genre, genre) {
+			continue
+		}
+		if artist != "" {
+			found := false
+			for _, n := range splitArtists(s.Artist) {
+				if strings.EqualFold(n, artist) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if album != "" && !strings.EqualFold(s.Album, album) {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	
+	var out []map[string]any
+	for i := range filtered {
+		out = append(out, songToMap(&filtered[i]))
+	}
+	h.writeOK(w, r, map[string]any{
+		"songs": map[string]any{"song": out},
+	})
+}
+
 func (h *Handler) getSimilarSongs(w http.ResponseWriter, r *http.Request, user string, key string) {
 	id := r.URL.Query().Get("id")
 	songs := h.visibleSongs(user)
@@ -1035,7 +1092,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	
-	// 对 URL 进行转义，防止空格和中文导致客户端无法跳转
 	if u, err := url.Parse(rawURL); err == nil {
 		rawURL = u.String()
 		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
@@ -1150,7 +1206,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 1. 剥离客户端自作主张拼接的重复前缀
 	if strings.HasPrefix(id, "al-al-") {
 		id = strings.TrimPrefix(id, "al-")
 	}
@@ -1161,7 +1216,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		id = strings.TrimPrefix(id, "pl-")
 	}
 
-	// 2. 智能推断 type（棉花音乐有时会漏传 type 参数）
 	if typ == "" {
 		if strings.HasPrefix(id, "ar-") {
 			typ = "artist"
@@ -1172,7 +1226,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 3. 处理歌手封面
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
@@ -1206,7 +1259,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 
-	// 4. 处理歌曲/专辑/歌单封面
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
 		serveDefaultCover(w)
@@ -1223,13 +1275,11 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
-	// 匹配歌曲 ID
 	for _, s := range songs {
 		if s.ID == id {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
-			// 回退：找同一张专辑里有封面的歌
 			for _, s2 := range songs {
 				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
 					return s2.CoverPath
@@ -1239,14 +1289,15 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 		}
 	}
 
-	// 匹配专辑 ID（不管 type 传没传，只要 id 能对上专辑就返回）
-	for _, s := range songs {
-		if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
-			return s.CoverPath
+	if typ == "album" || strings.HasPrefix(id, "al-") {
+		for _, s := range songs {
+			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
+				return s.CoverPath
+			}
 		}
+		return ""
 	}
 
-	// 匹配歌单 ID
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
 		realID := strings.TrimPrefix(id, "pl-")
 		plSongs, _ := h.DB.GetPlaylistSongs(realID)
@@ -1277,7 +1328,6 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	thumbPath := fmt.Sprintf("%s/%s_%d.jpg", thumbDir, base, size)
 	
-	// 如果缓存存在，且文件正常（大于 0 字节），直接返回
 	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
 		http.ServeFile(w, r, thumbPath)
 		return
@@ -1290,18 +1340,14 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	defer f.Close()
 	
-	// 尝试解码内嵌图
 	img, _, err := image.Decode(f)
 	if err != nil {
-		// 【核心容错】如果解码失败（格式不标准），绝不返回 404，直接把原文件塞给客户端！
 		serveLocalCover(w, r, path)
 		return
 	}
 	
-	// 生成缩略图
 	thumb := imaging.Fill(img, size, size, imaging.Center, imaging.Lanczos)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(85)); err != nil {
-		// 如果保存缓存失败，直接在内存中编码并返回给客户端，绝不留白
 		w.Header().Set("Content-Type", "image/jpeg")
 		imaging.Encode(w, thumb, imaging.JPEG, imaging.JPEGQuality(85))
 		return
@@ -1370,7 +1416,6 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			continue
 		}
 		
-		// 找歌单里第一首有封面的歌，用它的 ID 作为封面 ID
 		coverArt := p.ID
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
 		for _, s := range songs {
@@ -1415,7 +1460,6 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		totalDur += songs[i].Dur
 	}
 	
-	// 同样使用第一首有封面的歌的 ID
 	coverArt := p.ID
 	for _, s := range songs {
 		if s.CoverPath != "" {
@@ -1855,7 +1899,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 					"@id":         artistID(name), 
 					"@name":       name, 
 					"@albumCount": 1,
-					"@songCount":  artistSongCount[name], // 标准字段
+					"@songCount":  artistSongCount[name],
 				})
 			}
 		}
@@ -1991,6 +2035,73 @@ func songToMap(s *db.Song) map[string]any {
 		"@composer":           s.Composer,
 		"@isrc":               s.ISRC,
 		"artists":             artists,
+	}
+}
+
+// 专为棉花音乐生成的纯净版歌曲对象，防止它解析崩溃
+func cottonSongToMap(s *db.Song) map[string]any {
+	ct := "audio/mpeg"
+	switch strings.ToLower(s.Fmt) {
+	case "flac":
+		ct = "audio/flac"
+	case "mp3":
+		ct = "audio/mpeg"
+	case "m4a", "aac":
+		ct = "audio/mp4"
+	case "ogg":
+		ct = "audio/ogg"
+	case "opus":
+		ct = "audio/opus"
+	case "wav":
+		ct = "audio/wav"
+	}
+	suffix := strings.ToLower(s.Fmt)
+	if suffix == "virtual" {
+		suffix = "mp3"
+	}
+	
+	track := s.TrackNumber
+	if track <= 0 {
+		track = 1
+	}
+	disc := s.DiscNumber
+	if disc <= 0 {
+		disc = 1
+	}
+	
+	aID := albumID(s.Album, s.Artist)
+	arID := artistID(s.Artist)
+	coverArt := s.ID
+	if s.CoverPath == "" {
+		coverArt = aID
+	}
+	
+	return map[string]any{
+		"@id":           s.ID,
+		"@parent":       aID,
+		"@isDir":        false,
+		"@title":        s.Title,
+		"@album":        s.Album,
+		"@artist":       s.Artist,
+		"@albumArtist":  s.AlbumArtist,
+		"@track":        track,
+		"@discNumber":   disc,
+		"@year":         s.Year,
+		"@genre":        s.Genre,
+		"@coverArt":     coverArt,
+		"@size":         s.FileSize,
+		"@contentType":  ct,
+		"@suffix":       suffix,
+		"@duration":     s.Dur,
+		"@bitRate":      s.Bitrate,
+		"@path":         s.Path,
+		"@albumId":      aID,
+		"@artistId":     arID,
+		"@type":         "music",
+		"@created":      "2024-01-01T00:00:00.000Z",
+		"@isVideo":      false,
+		"@samplingRate": s.SampleRate,
+		"@channelCount": s.Channels,
 	}
 }
 
