@@ -1188,7 +1188,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// ================= 新增：兼容 Navidrome 原生客户端的前缀和纯 MD5 =================
 	if strings.HasPrefix(id, "mf-") {
 		id = strings.TrimPrefix(id, "mf-")
 		typ = "song"
@@ -1202,12 +1201,10 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if strings.HasPrefix(id, "pl-pl-") {
 		id = strings.TrimPrefix(id, "pl-")
 	}
-	
-	// 如果客户端传来的是没有任何前缀的 32 位 MD5，我们要智能判断它是歌手还是专辑
+
 	if len(id) == 32 && typ == "" {
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
-			// 判断是不是歌手 MD5
 			for _, name := range splitArtists(s.Artist) {
 				if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
 					typ = "artist"
@@ -1217,14 +1214,12 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			if typ == "artist" {
 				break
 			}
-			// 判断是不是专辑 MD5
 			if fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == id {
 				typ = "album"
 				break
 			}
 		}
 	}
-	// ==============================================================================
 
 	if typ == "" {
 		if strings.HasPrefix(id, "ar-") {
@@ -1239,17 +1234,19 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
-			// 这里的 resolveArtistName 会精确识别 32 位 MD5，拿到中文歌手名
+			// 解析出真实歌手名
 			name = h.resolveArtistName(id, user)
 		}
 		
-		// 优先去网易云或 LX 拉取高清歌手头像
+		// 1. 优先去网易云拉取高清歌手写真
 		if h.NCM != nil && name != "" && name != id {
 			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 				proxyImage(w, d.Pic)
 				return
 			}
 		}
+		
+		// 2. 网易云没有，去洛雪（LX）拉取歌手写真
 		if h.LX != nil && name != "" && name != id {
 			if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
 				proxyImage(w, d.Pic)
@@ -1257,22 +1254,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			}
 		}
 		
-		// 兜底：如果网易云也没图，就用该歌手名下任意一首歌的内嵌封面
-		songs := h.visibleSongs(user)
-		for _, s := range songs {
-			for _, n := range splitArtists(s.Artist) {
-				if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
-					if s.CoverPath != "" {
-						if size > 0 {
-							h.serveThumb(w, r, s.CoverPath, size)
-						} else {
-							serveLocalCover(w, r, s.CoverPath)
-						}
-						return
-					}
-				}
-			}
-		}
+		// 3. 实在没图，返回默认的灰色头像。绝不拿专辑封面凑数！
 		serveDefaultCover(w)
 		return
 	}
@@ -1293,21 +1275,18 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
-	// ================= 新增：支持 Navidrome 的 32 位 MD5 专辑/歌手 ID =================
 	rawID := id
 	if strings.HasPrefix(rawID, "al-") {
 		rawID = strings.TrimPrefix(rawID, "al-")
 	} else if strings.HasPrefix(rawID, "ar-") {
 		rawID = strings.TrimPrefix(rawID, "ar-")
 	}
-	// 匹配 32 位 MD5 专辑
 	for _, s := range songs {
 		ndID := fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist)))
 		if ndID == rawID && s.CoverPath != "" {
 			return s.CoverPath
 		}
 	}
-	// 匹配 32 位 MD5 歌手
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
 			ndID := fmt.Sprintf("%x", md5.Sum([]byte(name)))
@@ -1316,7 +1295,6 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 			}
 		}
 	}
-	// =========================================================================
 
 	for _, s := range songs {
 		if s.ID == id {
@@ -1827,24 +1805,20 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	})
 }
 
-// ==================== 精准歌手解析（废弃缓存，实时查库） ====================
+// 精准歌手解析（废弃缓存，实时查库）
 func (h *Handler) resolveArtistName(id, user string) string {
 	if id == "" {
 		return ""
 	}
-	// 直接实时遍历查询，确保 8位前缀和 32位MD5 百分百匹配
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
-			// 1. 匹配 Subsonic 的 8 位 ar- 格式
 			if artistID(name) == id {
 				return name
 			}
-			// 2. 匹配 Navidrome 的 32 位 MD5 格式
 			if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
 				return name
 			}
-			// 3. 匹配原始名字
 			if name == id {
 				return name
 			}
