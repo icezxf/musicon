@@ -157,6 +157,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getArtists(w, r, u)
 	case "getArtist":
 		h.getArtist(w, r, u)
+	case "getMusicDirectory": // [标准补充] 文件夹视图下的歌手/专辑目录
+		h.getMusicDirectory(w, r, u)
 	case "getAlbumList":
 		h.getAlbumList(w, r, u)
 	case "getAlbumList2":
@@ -173,6 +175,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.getRandomSongs(w, r, u)
 	case "getTopSongs":
 		h.getTopSongs(w, r, u)
+	case "getSongs": // [标准补充] Subsonic 老接口，某些客户端仍在用来获取全部歌曲
+		h.getSongs(w, r, u)
 	case "getSimilarSongs":
 		h.getSimilarSongs(w, r, u, "similarSongs")
 	case "getSimilarSongs2":
@@ -451,7 +455,7 @@ func (h *Handler) buildArtistGroups(songs []db.Song) []map[string]any {
 			"@id":         artistID(artist),
 			"@name":       artist,
 			"@albumCount": len(albums),
-			"@songCount":  artistSongCount[artist], // 补上标准字段
+			"@songCount":  artistSongCount[artist],
 			"@coverArt":   artistID(artist),
 		})
 	}
@@ -531,7 +535,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	}
 	
 	var albumList []map[string]any
-	totalSongCount := 0 // 统计总数
+	totalSongCount := 0
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 		totalSongCount += a.count
@@ -542,11 +546,129 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			"@id":         id,
 			"@name":       artistName,
 			"@albumCount": len(albumList),
-			"@songCount":  totalSongCount, // 补上标准字段，解决棉花音乐 0 歌曲
+			"@songCount":  totalSongCount,
 			"@coverArt":   id,
 			"album":       albumList,
 		},
 	})
+}
+
+// [标准补充] getMusicDirectory
+func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user string) {
+	id := r.URL.Query().Get("id")
+	songs := h.visibleSongs(user)
+
+	dirName := ""
+	parent := "1"
+	children := make([]map[string]any, 0)
+
+	switch {
+	case id == "" || id == "1":
+		seen := map[string]bool{}
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				aid := artistID(n)
+				if seen[aid] {
+					continue
+				}
+				seen[aid] = true
+				children = append(children, map[string]any{
+					"@id":       aid,
+					"@parent":   "1",
+					"@isDir":    true,
+					"@title":    n,
+					"@name":     n,
+					"@artist":   n,
+					"@coverArt": aid,
+					"@created":  "2024-01-01T00:00:00.000Z",
+				})
+			}
+		}
+		dirName = "Music"
+		parent = ""
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "ar-"):
+		for _, s := range songs {
+			matched := false
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id {
+					if dirName == "" {
+						dirName = n
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			// 直接在歌手目录下返回歌曲列表，兼容老客户端
+			children = append(children, songToMap(&s))
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Artist not found")
+			return
+		}
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "al-"):
+		for i := range songs {
+			if albumID(songs[i].Album, songs[i].Artist) == id {
+				if dirName == "" {
+					dirName = songs[i].Album
+					parent = artistID(songs[i].Artist)
+				}
+				children = append(children, songToMap(&songs[i]))
+			}
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Album not found")
+			return
+		}
+		sort.Slice(children, func(i, j int) bool {
+			ti := atoiAny(children[i]["@track"])
+			tj := atoiAny(children[j]["@track"])
+			if ti != tj {
+				return ti < tj
+			}
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	default:
+		h.writeErr(w, r, 70, "Directory not found")
+		return
+	}
+
+	dir := map[string]any{
+		"@id":    id,
+		"@name":  dirName,
+		"@isDir": true,
+		"child":  children,
+	}
+	if parent != "" {
+		dir["@parent"] = parent
+	}
+	h.writeOK(w, r, map[string]any{"directory": dir})
+}
+
+func atoiAny(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		n, _ := strconv.Atoi(x)
+		return n
+	}
+	return 0
 }
 
 func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request, user string) {
@@ -787,6 +909,45 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request, user strin
 	}
 	h.writeOK(w, r, map[string]any{
 		"topSongs": map[string]any{"song": out},
+	})
+}
+
+// [标准补充] getSongs 老接口，支持按 genre, artist, album 等过滤
+func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
+	genre := r.URL.Query().Get("genre")
+	artist := r.URL.Query().Get("artist")
+	album := r.URL.Query().Get("album")
+	
+	songs := h.visibleSongs(user)
+	var filtered []db.Song
+	for _, s := range songs {
+		if genre != "" && !strings.EqualFold(s.Genre, genre) {
+			continue
+		}
+		if artist != "" {
+			found := false
+			for _, n := range splitArtists(s.Artist) {
+				if strings.EqualFold(n, artist) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		if album != "" && !strings.EqualFold(s.Album, album) {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	
+	var out []map[string]any
+	for i := range filtered {
+		out = append(out, songToMap(&filtered[i]))
+	}
+	h.writeOK(w, r, map[string]any{
+		"songs": map[string]any{"song": out},
 	})
 }
 
@@ -1252,10 +1413,14 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			continue
 		}
 		
+		// 【修复】找歌单里第一首有封面的歌，用它的 ID 作为封面 ID
 		coverArt := p.ID
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
-		if len(songs) > 0 && songs[0].CoverPath != "" {
-			coverArt = songs[0].ID
+		for _, s := range songs {
+			if s.CoverPath != "" {
+				coverArt = s.ID
+				break
+			}
 		}
 
 		out = append(out, map[string]any{
@@ -1265,7 +1430,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 			"@public":    p.Public,
 			"@songCount": p.Count,
 			"@duration":  p.Duration,
-			"@coverArt":  coverArt,
+			"@coverArt":  coverArt, // 返回歌曲 ID，客户端去查歌曲封面直接命中
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 		})
@@ -1293,9 +1458,13 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		totalDur += songs[i].Dur
 	}
 	
+	// 【修复】同样使用第一首有封面的歌的 ID
 	coverArt := p.ID
-	if len(songs) > 0 && songs[0].CoverPath != "" {
-		coverArt = songs[0].ID
+	for _, s := range songs {
+		if s.CoverPath != "" {
+			coverArt = s.ID
+			break
+		}
 	}
 
 	h.writeOK(w, r, map[string]any{
@@ -1306,7 +1475,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 			"@public":    p.Public,
 			"@songCount": len(entries),
 			"@duration":  totalDur,
-			"@coverArt":  coverArt,
+			"@coverArt":  coverArt, // 同上
 			"@created":   "2024-01-01T00:00:00.000Z",
 			"@changed":   "2024-01-01T00:00:00.000Z",
 			"entry":      entries,
