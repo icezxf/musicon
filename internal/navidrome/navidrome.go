@@ -465,17 +465,15 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 
 	songs := h.visibleSongs(user)
 	albumIDFilter := r.URL.Query().Get("album_id")
-	artistIDFilter := r.URL.Query().Get("artist_id") // 接收歌手过滤参数
+	artistIDFilter := r.URL.Query().Get("artist_id") 
 	titleFilter := strings.ToLower(r.URL.Query().Get("title"))
 
 	var filtered []db.Song
 	for _, s := range songs {
 		album, artist, _, title, _ := cleanSongMeta(s)
 		
-		// 专辑过滤
 		if albumIDFilter != "" && genID(album+"|"+artist) != albumIDFilter { continue }
 		
-		// 歌手过滤（解决歌手详情页展示全量歌曲的问题）
 		if artistIDFilter != "" {
 			matched := false
 			for _, n := range splitArtists(artist) {
@@ -532,7 +530,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"id": s.ID, "path": s.Path, "title": title, "album": album,
 		"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 		"albumId": aID, 
-		"coverArt": aID, // 歌曲封面使用专辑 ID
+		"coverArt": aID, 
 		"hasCoverArt": s.CoverPath != "", "trackNumber": maxNum(1, s.TrackNumber),
 		"discNumber": maxNum(1, s.DiscNumber), "year": s.Year, "date": strconv.Itoa(s.Year),
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix,
@@ -615,7 +613,6 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				return
 			}
 			
-			// 兼容一下可能为空的更新
 			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
 			h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id)
 			b := 0; if req.Public { b = 1 }
@@ -638,7 +635,6 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				return
 			}
 			if req.Ids != "" {
-				// 注意：如果是数组格式也可以兼容一下
 				songIDs := strings.Split(req.Ids, ",")
 				h.DB.AddSongsToPlaylist(id, songIDs)
 			}
