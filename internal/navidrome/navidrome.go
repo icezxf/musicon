@@ -186,7 +186,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 收藏处理 ====================
+// ==================== 收藏处理（修复级联问题） ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids []string
@@ -214,36 +214,11 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 	val := 0
 	if isStar { val = 1 }
 
+	// 【修复】只处理歌曲 ID。不再级联更新专辑和歌手下的所有歌曲，避免点一首歌全红。
+	// 如果客户端传了专辑和歌手，我们忽略它们，因为数据库没有独立的收藏表。
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
-	}
-
-	songs := h.visibleSongs(user)
-	for _, aid := range albumIds {
-		cleanID := strings.TrimPrefix(aid, "al-")
-		for _, s := range songs {
-			album := strings.TrimSpace(s.Album)
-			if album == "" { album = "未知专辑" }
-			artist := strings.TrimSpace(s.Artist)
-			if artist == "" { artist = "未知歌手" }
-			if genID(album+"|"+artist) == cleanID || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == cleanID {
-				h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
-			}
-		}
-	}
-
-	for _, arid := range artistIds {
-		cleanID := strings.TrimPrefix(arid, "ar-")
-		for _, s := range songs {
-			artist := strings.TrimSpace(s.Artist)
-			if artist == "" { artist = "未知歌手" }
-			for _, name := range splitArtists(artist) {
-				if genID(name) == cleanID || fmt.Sprintf("%x", md5.Sum([]byte(name))) == cleanID {
-					h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
-				}
-			}
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -365,11 +340,20 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	var out []map[string]any
 	for name, agg := range artistMap {
 		id := genID(name)
+		// 只要该歌手有任意一首歌被收藏，客户端就会看到该歌手被收藏
+		starred := false
+		for _, s := range songs {
+			if starredMap[s.ID] && strings.Contains(s.Artist, name) {
+				starred = true
+				break
+			}
+		}
+
 		out = append(out, map[string]any{
 			"playCount":             0,
-			"playDate":              time.Now().Format(time.RFC3339),
+			"playDate":              nil,
 			"rating":                0,
-			"starred":               false,
+			"starred":               starred,
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
@@ -398,6 +382,8 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	albumSet := map[string]bool{}
 	var songCount int
 	var totalSize int64
+	starredMap := h.getStarredMap()
+	isStar := false
 
 	for _, s := range songs {
 		_, artist, _, _, _ := cleanSongMeta(s)
@@ -408,6 +394,9 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 				totalSize += s.FileSize
 				album, _, _, _, _ := cleanSongMeta(s)
 				albumSet[album] = true
+				if starredMap[s.ID] {
+					isStar = true
+				}
 			}
 		}
 	}
@@ -418,13 +407,12 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		return
 	}
 
-	// 严格对齐文档，防止 Flutter 解析崩溃
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount":             0,
-		"playDate":              time.Now().Format(time.RFC3339), // 必须是字符串
+		"playDate":              nil,
 		"rating":                0,
-		"starred":               false,
-		"starredAt":             time.Now().Format(time.RFC3339), // 防闪退，改为时间字符串
+		"starred":               isStar,
+		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
 		"albumCount":            len(albumSet),
@@ -486,8 +474,8 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": nil,
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nowStr,
-			"rating": 0, "starred": false, "starredAt": nowStr, "externalInfoUpdatedAt": nil,
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
+			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr,
 		})
 	}
@@ -503,6 +491,8 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	var outAlbum map[string]any
 	var songCount, totalDur int
 	var totalSize int64
+	starredMap := h.getStarredMap()
+	isStar := false
 
 	for _, s := range songs {
 		album, artist, albumArtist, _, _ := cleanSongMeta(s)
@@ -517,13 +507,16 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": time.Now().Format(time.RFC3339), "rating": 0, "starred": false, "starredAt": time.Now().Format(time.RFC3339),
+					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 				}
 			}
 			songCount++
 			totalDur += s.Dur
 			totalSize += s.FileSize
+			if starredMap[s.ID] {
+				isStar = true
+			}
 		}
 	}
 	if outAlbum == nil {
@@ -531,6 +524,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 		return
 	}
+	outAlbum["starred"] = isStar
 	outAlbum["songCount"] = songCount
 	outAlbum["duration"] = float64(totalDur)
 	outAlbum["size"] = totalSize
@@ -575,7 +569,7 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 		album, artist, _, _, _ := cleanSongMeta(s)
 		aID := genID(album + "|" + artist)
 		arID := genID(artist)
-		out = append(out, h.songObj(s, aID, arID, "", nowStr))
+		out = append(out, h.songObj(s, aID, arID, starredMap[s.ID], nowStr))
 	}
 
 	total := len(out)
@@ -598,20 +592,27 @@ func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user
 	album, artist, _, _, _ := cleanSongMeta(*found)
 	aID := genID(album + "|" + artist)
 	arID := genID(artist)
-	json.NewEncoder(w).Encode(h.songObj(*found, aID, arID, "", time.Now().Format(time.RFC3339)))
+	starredMap := h.getStarredMap()
+	json.NewEncoder(w).Encode(h.songObj(*found, aID, arID, starredMap[found.ID], time.Now().Format(time.RFC3339)))
 }
 
-func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr string) map[string]any {
+func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr string) map[string]any {
 	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
 	dur := float64(s.Dur)
 	if dur <= 0 { dur = 0.1 }
 
+	var starredAt any = nil
+	var playDate any = nil
+	if isStarred {
+		starredAt = nowStr
+	}
+
 	return map[string]any{
 		"playCount":           0,
-		"playDate":            nowStr,
+		"playDate":            playDate,
 		"rating":              0,
-		"starred":             false,
-		"starredAt":           nowStr,
+		"starred":             isStarred,
+		"starredAt":           starredAt,
 		"bookmarkPosition":    0,
 		"id":                  s.ID,
 		"path":                s.Path,
@@ -643,7 +644,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"orderArtistName":     artist,
 		"orderAlbumArtistName": albumArtist,
 		"compilation":         false,
-		"lyrics":              "[]",
+		"lyrics":              "",
 		"rgAlbumGain":         0.0,
 		"rgAlbumPeak":         0.0,
 		"rgTrackGain":         0.0,
@@ -833,13 +834,14 @@ func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, 
 	songs, _ := h.DB.GetPlaylistSongs(id)
 	nowStr := time.Now().Format(time.RFC3339)
 	var out []map[string]any
+	starredMap := h.getStarredMap()
 	
 	for idx, s := range songs {
 		album, artist, _, _, _ := cleanSongMeta(s)
 		aID := genID(album + "|" + artist)
 		arID := genID(artist)
 		
-		sObj := h.songObj(s, aID, arID, "", nowStr)
+		sObj := h.songObj(s, aID, arID, starredMap[s.ID], nowStr)
 		sObj["id"] = strconv.Itoa(idx + 1)
 		sObj["mediaFileId"] = s.ID
 		sObj["playlistId"] = id
