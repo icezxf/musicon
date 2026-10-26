@@ -348,7 +348,6 @@ func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 【绝对标准】返回合法的默认时间
 func safeSongDate(year int) string {
 	if year <= 0 { return "" }
 	return strconv.Itoa(year)
@@ -359,6 +358,15 @@ func safeAlbumDate(year int) string {
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
 }
 
+func getBaseURL(r *http.Request) string {
+	host := r.Host
+	scheme := "http"
+	if r.TLS != nil { scheme = "https" }
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" { host = fh }
+	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" { scheme = fp }
+	return scheme + "://" + host
+}
+
 // ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
@@ -367,6 +375,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
 	starFilter := isStarred(r)
 	favArtists := h.getFavoriteArtists(user)
+	baseURL := getBaseURL(r)
 
 	type artistAgg struct { name string; albumCount int; songCount int; size int64 }
 	artistMap := map[string]*artistAgg{}
@@ -391,16 +400,18 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		// 【绝对防御】防止 null 导致前端解析崩溃
 		var starredAt string = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
+		
+		imgURL := baseURL + "/rest/getArtistImage.view?id=" + id // 必须给合法 URL，否则前端在跳转动画里必崩
+
 		out = append(out, map[string]any{
 			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
 			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
-			"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "", // 空字符串避免 null
+			"mbzArtistId": "", "smallImageUrl": imgURL, "mediumImageUrl": imgURL, "largeImageUrl": imgURL,
 			"externalUrl": "https://www.last.fm/music/" + name, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
-			"coverArt": id, // 补全 coverArt
+			"coverArt": id,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
@@ -438,13 +449,15 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	isFav := favArtists[searchID]
 	var starredAt string = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
+	baseURL := getBaseURL(r)
+	imgURL := baseURL + "/rest/getArtistImage.view?id=" + searchID
 
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 		"id": id, "name": artistName, "coverArt": searchID,
 		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
-		"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
+		"mbzArtistId": "", "smallImageUrl": imgURL, "mediumImageUrl": imgURL, "largeImageUrl": imgURL,
 		"externalUrl": "https://www.last.fm/music/" + artistName, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
