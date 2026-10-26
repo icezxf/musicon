@@ -123,7 +123,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
 
-	// 图片接口免认证放行，防止各种客户端拉图时被拦截！
+	// 图片接口直接放行，防止拉图失败
 	if p == "getArtistImage" || p == "getCoverArt" {
 		switch p {
 		case "getArtistImage":
@@ -1192,69 +1192,97 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	if typ == "artist" || strings.HasPrefix(id, "ar-") || (len(id) == 32 && typ == "") {
-		name := r.URL.Query().Get("artist_name")
-		if name == "" {
-			name = h.resolveArtistName(id, user)
-		}
-		
-		// 优先去网易云拉取
-		if h.NCM != nil && name != "" && name != id {
-			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
-				if proxyImage(w, d.Pic) {
-					return
-				}
-			}
-		}
-		// 去洛雪拉取
-		if h.LX != nil && name != "" && name != id {
-			if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-				if proxyImage(w, d.Pic) {
-					return
-				}
-			}
-		}
-		
-		// 外网失败，用本地封面
-		songs := h.visibleSongs(user)
-		for _, s := range songs {
-			for _, n := range splitArtists(s.Artist) {
-				if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
-					if s.CoverPath != "" {
-						if size > 0 {
-							h.serveThumb(w, r, s.CoverPath, size)
-						} else {
-							serveLocalCover(w, r, s.CoverPath)
-						}
-						return
-					}
-				}
-			}
-		}
-		serveDefaultCover(w)
+	// 剥离重复前缀
+	if strings.HasPrefix(id, "al-al-") {
+		id = strings.TrimPrefix(id, "al-")
+	}
+	if strings.HasPrefix(id, "ar-ar-") {
+		id = strings.TrimPrefix(id, "ar-")
+	}
+	if strings.HasPrefix(id, "pl-pl-") {
+		id = strings.TrimPrefix(id, "pl-")
+	}
+
+	// 1. 明确指明是歌手的，走歌手取图
+	if typ == "artist" || strings.HasPrefix(id, "ar-") {
+		h.serveArtistCover(w, r, user, id, size)
 		return
 	}
 
+	// 2. 优先尝试在本地匹配专辑、歌曲的封面（涵盖了 Subsonic 的 al-xxx 和 Nav 的 32 位 MD5）
 	coverPath := h.findCoverPath(id, typ, user)
-	if coverPath == "" {
-		serveDefaultCover(w)
+	if coverPath != "" {
+		if size > 0 {
+			h.serveThumb(w, r, coverPath, size)
+		} else {
+			serveLocalCover(w, r, coverPath)
+		}
 		return
 	}
-	if size > 0 {
-		h.serveThumb(w, r, coverPath, size)
+
+	// 3. 如果没匹配到，且是 32 位纯 MD5，可能是 Navidrome 客户端直接拿歌手 MD5 来要歌手图
+	if len(id) == 32 {
+		h.serveArtistCover(w, r, user, id, size)
 		return
 	}
-	serveLocalCover(w, r, coverPath)
+
+	serveDefaultCover(w)
+}
+
+func (h *Handler) serveArtistCover(w http.ResponseWriter, r *http.Request, user, id string, size int) {
+	name := r.URL.Query().Get("artist_name")
+	if name == "" {
+		name = h.resolveArtistName(id, user)
+	}
+	
+	// 优先去网易云
+	if h.NCM != nil && name != "" && name != id {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+			if proxyImage(w, d.Pic) {
+				return
+			}
+		}
+	}
+	
+	// 洛雪
+	if h.LX != nil && name != "" && name != id {
+		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
+			if proxyImage(w, d.Pic) {
+				return
+			}
+		}
+	}
+	
+	// 兜底：用本地专辑封面
+	songs := h.visibleSongs(user)
+	for _, s := range songs {
+		for _, n := range splitArtists(s.Artist) {
+			if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
+				if s.CoverPath != "" {
+					if size > 0 {
+						h.serveThumb(w, r, s.CoverPath, size)
+					} else {
+						serveLocalCover(w, r, s.CoverPath)
+					}
+					return
+				}
+			}
+		}
+	}
+	
+	serveDefaultCover(w)
 }
 
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
+	// 1. 匹配歌曲
 	for _, s := range songs {
 		if s.ID == id {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
+			// 找同专辑
 			for _, s2 := range songs {
 				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
 					return s2.CoverPath
@@ -1264,15 +1292,24 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 		}
 	}
 
-	if typ == "album" || strings.HasPrefix(id, "al-") {
-		for _, s := range songs {
-			if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
-				return s.CoverPath
-			}
+	// 2. 匹配专辑
+	for _, s := range songs {
+		album := strings.TrimSpace(s.Album)
+		if album == "" { album = "未知专辑" }
+		artist := strings.TrimSpace(s.Artist)
+		if artist == "" { artist = "未知歌手" }
+		
+		// Subsonic (al-xxxx)
+		if albumID(album, artist) == id && s.CoverPath != "" {
+			return s.CoverPath
 		}
-		return ""
+		// Navidrome (32位MD5)
+		if fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id && s.CoverPath != "" {
+			return s.CoverPath
+		}
 	}
 
+	// 3. 歌单
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
 		realID := strings.TrimPrefix(id, "pl-")
 		plSongs, _ := h.DB.GetPlaylistSongs(realID)
@@ -1704,40 +1741,12 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
 		scheme = fp
 	}
-	name := h.resolveArtistName(id, user)
-	bio := ""
-	hasPic := false
-
-	if name != "" {
-		if h.NCM != nil {
-			if d, err := h.NCM.GetArtistDetail(name); err == nil {
-				bio = d.Bio
-				hasPic = d.Pic != ""
-			}
-		}
-		if !hasPic && bio == "" {
-			if d, err := h.LX.GetSingerDetail(name); err == nil {
-				if bio == "" {
-					bio = d.Bio
-				}
-				if !hasPic {
-					hasPic = d.Pic != ""
-				}
-			}
-		}
-	}
-
 	base := scheme + "://" + host
-	var imgURL string
-	if hasPic {
-		imgURL = base + "/rest/getArtistImage?id=" + id
-	} else {
-		imgURL = base + "/rest/getCoverArt?id=" + id
-	}
+	imgURL := base + "/rest/getArtistImage?id=" + id
 
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
-			"biography":      bio,
+			"biography":      "",
 			"smallImageUrl":  imgURL,
 			"mediumImageUrl": imgURL,
 			"largeImageUrl":  imgURL,
@@ -1770,38 +1779,14 @@ func (h *Handler) resolveArtistName(id, user string) string {
 
 func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
-	name := h.resolveArtistName(id, user)
-
-	if h.NCM != nil && name != "" && name != id {
-		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
-			if proxyImage(w, d.Pic) {
-				return
-			}
+	sizeStr := r.URL.Query().Get("size")
+	size := 0
+	if sizeStr != "" {
+		if n, err := strconv.Atoi(sizeStr); err == nil && n > 0 && n <= 2000 {
+			size = n
 		}
 	}
-
-	if h.LX != nil && name != "" && name != id {
-		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-			if proxyImage(w, d.Pic) {
-				return
-			}
-		}
-	}
-	
-	// 外网失败，用本地专辑封面
-	songs := h.visibleSongs(user)
-	for _, s := range songs {
-		for _, n := range splitArtists(s.Artist) {
-			if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
-				if s.CoverPath != "" {
-					serveLocalCover(w, r, s.CoverPath)
-					return
-				}
-			}
-		}
-	}
-	
-	serveDefaultCover(w)
+	h.serveArtistCover(w, r, user, id, size)
 }
 
 // ==================== 上报 ====================
