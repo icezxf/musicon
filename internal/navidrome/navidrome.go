@@ -336,7 +336,7 @@ func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 【核心修复】保证返回合法的日期字符串，绝不能为 null，防止 Flutter 的 DateTime.parse 崩溃
+// 返回合法的时间格式，绝对不为 null
 func safeDate(year int) string {
 	if year <= 0 { return "1970-01-01T00:00:00Z" }
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
@@ -393,7 +393,8 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 
 func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	defer func() { recover() }()
-	cleanID := strings.TrimPrefix(id, "ar-")
+	searchID := strings.TrimPrefix(id, "ar-")
+	
 	songs := h.visibleSongs(user)
 	var artistName string
 	albumSet := map[string]bool{}
@@ -403,7 +404,7 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	for _, s := range songs {
 		_, artist, _, _, _ := cleanSongMeta(s)
 		for _, name := range splitArtists(artist) {
-			if genID(name) == cleanID {
+			if genID(name) == searchID {
 				artistName = name
 				songCount++
 				totalSize += s.FileSize
@@ -415,13 +416,15 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	if artistName == "" { artistName = "未知歌手" }
 
 	favArtists := h.getFavoriteArtists(user)
-	isFav := favArtists[cleanID]
+	isFav := favArtists[searchID]
 	var starredAt any = nil
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 
+	// 【致命修复】必须带上 coverArt 字段，否则前端反序列化崩溃
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
-		"id": cleanID, "name": artistName, "albumCount": len(albumSet), "songCount": songCount,
+		"id": id, "name": artistName, "coverArt": searchID, // 补充 coverArt
+		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
 		"mbzArtistId": "", "smallImageUrl": nil, "mediumImageUrl": nil, "largeImageUrl": nil,
 		"externalUrl": "https://www.last.fm/music/" + artistName, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
@@ -479,9 +482,8 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath, "coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
 			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
-			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-			"songCount": agg.count, "duration": float64(agg.dur), // 必须 double
-			"size": agg.size, "genre": "", "genres": []string{},
+			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": []any{}, "compilation": false, // 【修复】前端可能期望数组
+			"songCount": agg.count, "duration": agg.dur, "size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
 			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
@@ -497,7 +499,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 
 func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	defer func() { recover() }()
-	cleanID := strings.TrimPrefix(id, "al-")
+	searchID := strings.TrimPrefix(id, "al-")
 	songs := h.visibleSongs(user)
 	var outAlbum map[string]any
 	var songCount, totalDur int
@@ -505,14 +507,14 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 
 	for _, s := range songs {
 		album, artist, albumArtist, _, _ := cleanSongMeta(s)
-		if genID(album+"|"+artist) == cleanID {
+		if genID(album+"|"+artist) == searchID {
 			if outAlbum == nil {
 				arID := genID(primaryArtist(artist))
 				outAlbum = map[string]any{
-					"id": cleanID, "name": album, "embedArtPath": s.CoverPath, "coverArt": cleanID,
+					"id": id, "name": album, "embedArtPath": s.CoverPath, "coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
-					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
+					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": []any{}, "compilation": false, // 【修复】前端可能期望数组
 					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
@@ -527,10 +529,10 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	}
 	if outAlbum == nil {
 		outAlbum = map[string]any{
-			"id": cleanID, "name": "未知专辑", "embedArtPath": "", "coverArt": cleanID,
+			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
 			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeDate(0),
-			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
+			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": []any{}, "compilation": false,
 			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
 			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
 			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
@@ -539,13 +541,13 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		}
 	}
 	favAlbums := h.getFavoriteAlbums(user)
-	isFav := favAlbums[cleanID]
+	isFav := favAlbums[searchID]
 	var starredAt any = nil
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = float64(totalDur) // 必须 double
+	outAlbum["duration"] = totalDur
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -591,12 +593,12 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 
 func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	defer func() { recover() }()
-	cleanID := strings.TrimPrefix(id, "mf-")
+	searchID := strings.TrimPrefix(id, "mf-")
 	songs := h.visibleSongs(user)
 	var found *db.Song
-	for _, s := range songs { if s.ID == cleanID { found = &s; break } }
+	for _, s := range songs { if s.ID == searchID { found = &s; break } }
 	if found == nil {
-		json.NewEncoder(w).Encode(h.songObj(db.Song{ID: cleanID, Title: "未知歌曲"}, "", "", false, time.Now().Format(time.RFC3339)))
+		json.NewEncoder(w).Encode(h.songObj(db.Song{ID: id, Title: "未知歌曲"}, "", "", false, time.Now().Format(time.RFC3339)))
 		return
 	}
 	album, artist, _, _, _ := cleanSongMeta(*found)
@@ -620,8 +622,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
 		"coverArt": s.ID, "hasCoverArt": true, "trackNumber": maxNum(1, s.TrackNumber), "discNumber": maxNum(1, s.DiscNumber),
 		"year": s.Year, "date": safeDate(s.Year), "originalYear": 0, "releaseYear": 0, "size": s.FileSize,
-		"suffix": suffix, "duration": float64(dur), // 【致命修复】严格使用 float64，应对 Dart 的 double
-		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
+		"suffix": suffix, "duration": dur, "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
 		"genres": []string{}, "fullText": " " + title + " " + album + " " + artist, "orderTitle": title,
 		"orderAlbumName": album, "orderArtistName": artist, "orderAlbumArtistName": albumArtist,
 		"compilation": false, "lyrics": "[]", "rgAlbumGain": 0.0, "rgAlbumPeak": 0.0, "rgTrackGain": 0.0, "rgTrackPeak": 0.0,
