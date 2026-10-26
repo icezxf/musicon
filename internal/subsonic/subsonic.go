@@ -219,14 +219,14 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.search(w, r, u, "searchResult2")
 	case "search3":
 		h.search(w, r, u, "searchResult3")
+	case "star":
+		h.handleStar(w, r, u, true)
+	case "unstar":
+		h.handleStar(w, r, u, false)
 	case "getStarred":
-		h.writeOK(w, r, map[string]any{"starred": map[string]any{
-			"artist": []any{}, "album": []any{}, "song": []any{},
-		}})
+		h.getStarred(w, r, u, "starred")
 	case "getStarred2":
-		h.writeOK(w, r, map[string]any{"starred2": map[string]any{
-			"artist": []any{}, "album": []any{}, "song": []any{},
-		}})
+		h.getStarred(w, r, u, "starred2")
 	case "getUser":
 		var role string
 		h.DB.DB.QueryRow(`SELECT role FROM subsonic_users WHERE username=?`, u).Scan(&role)
@@ -239,6 +239,73 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[subsonic] unimplemented: %s", p)
 		h.writeErr(w, r, 0, "not implemented: "+p)
 	}
+}
+
+// ==================== 收藏处理 ====================
+
+func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string, isStar bool) {
+	var ids []string
+
+	// 尝试解析 POST Body (OpenSubsonic 标准)
+	if r.Method == http.MethodPost {
+		var req struct {
+			Ids []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			ids = req.Ids
+		}
+	}
+
+	// 兼容 Query 参数
+	if len(ids) == 0 {
+		if id := r.URL.Query().Get("id"); id != "" {
+			ids = []string{id}
+		}
+	}
+
+	val := 0
+	if isStar {
+		val = 1
+	}
+
+	// 写入数据库（如果 songs 表有 starred 字段，即刻生效）
+	for _, id := range ids {
+		cleanID := strings.TrimPrefix(id, "mf-")
+		_, err := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+		if err != nil {
+			log.Printf("[subsonic] star SQL err: %v", err)
+		}
+	}
+
+	h.writeOK(w, r, map[string]any{})
+}
+
+func (h *Handler) getStarred(w http.ResponseWriter, r *http.Request, user string, key string) {
+	songs := h.visibleSongs(user)
+	starredIDs := map[string]bool{}
+
+	// 查库
+	rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				starredIDs[id] = true
+			}
+		}
+	}
+
+	var starredSongs []map[string]any
+	for i := range songs {
+		if starredIDs[songs[i].ID] {
+			starredSongs = append(starredSongs, songToMap(&songs[i]))
+		}
+	}
+
+	h.writeOK(w, r, map[string]any{key: map[string]any{
+		"artist": []any{}, "album": []any{}, "song": starredSongs,
+	}})
 }
 
 // ==================== 响应 ====================
