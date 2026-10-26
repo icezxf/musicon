@@ -108,7 +108,6 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// 支持 OpenSubsonic formPost
 	if r.Method == http.MethodPost {
 		r.ParseForm()
 		for k, v := range r.PostForm {
@@ -124,7 +123,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
 
-	// 【核心修复】图片接口免认证放行，防止各种客户端拉图时被拦截！
+	// 图片接口免认证放行，防止各种客户端拉图时被拦截！
 	if p == "getArtistImage" || p == "getCoverArt" {
 		switch p {
 		case "getArtistImage":
@@ -556,6 +555,122 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 			"album":       albumList,
 		},
 	})
+}
+
+func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user string) {
+	id := r.URL.Query().Get("id")
+	songs := h.visibleSongs(user)
+
+	dirName := ""
+	parent := "1"
+	children := make([]map[string]any, 0)
+
+	switch {
+	case id == "" || id == "1":
+		seen := map[string]bool{}
+		for _, s := range songs {
+			for _, n := range splitArtists(s.Artist) {
+				aid := artistID(n)
+				if seen[aid] {
+					continue
+				}
+				seen[aid] = true
+				children = append(children, map[string]any{
+					"@id":       aid,
+					"@parent":   "1",
+					"@isDir":    true,
+					"@title":    n,
+					"@name":     n,
+					"@artist":   n,
+					"@coverArt": aid,
+					"@created":  "2024-01-01T00:00:00.000Z",
+				})
+			}
+		}
+		dirName = "Music"
+		parent = ""
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "ar-"):
+		for _, s := range songs {
+			matched := false
+			for _, n := range splitArtists(s.Artist) {
+				if artistID(n) == id {
+					if dirName == "" {
+						dirName = n
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			children = append(children, songToMap(&s))
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Artist not found")
+			return
+		}
+		sort.Slice(children, func(i, j int) bool {
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	case strings.HasPrefix(id, "al-"):
+		for i := range songs {
+			if albumID(songs[i].Album, songs[i].Artist) == id {
+				if dirName == "" {
+					dirName = songs[i].Album
+					parent = artistID(songs[i].Artist)
+				}
+				children = append(children, songToMap(&songs[i]))
+			}
+		}
+		if dirName == "" {
+			h.writeErr(w, r, 70, "Album not found")
+			return
+		}
+		sort.Slice(children, func(i, j int) bool {
+			ti := atoiAny(children[i]["@track"])
+			tj := atoiAny(children[j]["@track"])
+			if ti != tj {
+				return ti < tj
+			}
+			return children[i]["@title"].(string) < children[j]["@title"].(string)
+		})
+
+	default:
+		h.writeErr(w, r, 70, "Directory not found")
+		return
+	}
+
+	dir := map[string]any{
+		"@id":    id,
+		"@name":  dirName,
+		"@isDir": true,
+		"child":  children,
+	}
+	if parent != "" {
+		dir["@parent"] = parent
+	}
+	h.writeOK(w, r, map[string]any{"directory": dir})
+}
+
+func atoiAny(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case string:
+		n, _ := strconv.Atoi(x)
+		return n
+	}
+	return 0
 }
 
 func (h *Handler) getAlbumList(w http.ResponseWriter, r *http.Request, user string) {
@@ -1100,7 +1215,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 			}
 		}
 		
-		// 【兜底】外网失败，用本地封面
+		// 外网失败，用本地封面
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
 			for _, n := range splitArtists(s.Artist) {
@@ -1631,7 +1746,7 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	})
 }
 
-// 【彻底修复】完美兼容 8位 ar-、32位 MD5 和原始中文名
+// 完美兼容 8位 ar-、32位 MD5 和原始中文名
 func (h *Handler) resolveArtistName(id, user string) string {
 	if id == "" {
 		return ""
@@ -1639,15 +1754,12 @@ func (h *Handler) resolveArtistName(id, user string) string {
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
-			// 1. 匹配 8位 ar- 格式
 			if artistID(name) == id {
 				return name
 			}
-			// 2. 匹配 32位 纯 MD5 格式
 			if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
 				return name
 			}
-			// 3. 直接匹配名字
 			if name == id {
 				return name
 			}
@@ -1676,7 +1788,7 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		}
 	}
 	
-	// 【兜底】外网失败，用本地专辑封面
+	// 外网失败，用本地专辑封面
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, n := range splitArtists(s.Artist) {
