@@ -28,7 +28,10 @@ type Handler struct {
 }
 
 func New(database *db.Holder, am *alist.Manager, c *config.Config) *Handler {
-	return &Handler{DB: database, AList: am, Cfg: c}
+	h := &Handler{DB: database, AList: am, Cfg: c}
+	// 确保数据库有 starred 字段，防止更新时报错
+	h.DB.DB.Exec("ALTER TABLE songs ADD COLUMN starred INTEGER DEFAULT 0")
+	return h
 }
 
 var (
@@ -155,7 +158,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 【新增】接管 star / unstar
+	// 接管 star / unstar
 	if p == "star" || p == "unstar" {
 		h.handleStar(w, r, username)
 		return
@@ -190,39 +193,64 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids []string
+	var albumIds []string
+	var artistIds []string
 
-	// 尝试解析 POST Body
+	// 尝试解析 POST Body (Navidrome 可能传 JSON)
 	if r.Method == http.MethodPost {
 		var req struct {
-			Ids []string `json:"ids"`
+			Ids       []string `json:"ids"`
+			AlbumIds  []string `json:"albumIds"`
+			ArtistIds []string `json:"artistIds"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 			ids = req.Ids
+			albumIds = req.AlbumIds
+			artistIds = req.ArtistIds
 		}
 	}
 
-	// 兼容 Query 参数
-	if len(ids) == 0 {
-		if id := r.URL.Query().Get("id"); id != "" {
-			ids = []string{id}
-		}
-	}
+	// 兼容 Query 参数 (Subsonic 标准)
+	if id := r.URL.Query().Get("id"); id != "" { ids = append(ids, id) }
+	if aid := r.URL.Query().Get("albumId"); aid != "" { albumIds = append(albumIds, aid) }
+	if arid := r.URL.Query().Get("artistId"); arid != "" { artistIds = append(artistIds, arid) }
 
 	isStar := strings.HasSuffix(r.URL.Path, "/star")
 	val := 0
-	if isStar {
-		val = 1
+	if isStar { val = 1 }
+
+	// 1. 处理歌曲 ID
+	for _, id := range ids {
+		cleanID := strings.TrimPrefix(id, "mf-")
+		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
 	}
 
-	// 写入数据库（如果你的 songs 表没有 starred 字段，这里会静默失败，但不影响客户端）
-	for _, id := range ids {
-		// 兼容带前缀的 ID
-		cleanID := id
-		if strings.HasPrefix(cleanID, "mf-") { cleanID = strings.TrimPrefix(cleanID, "mf-") }
-		
-		_, err := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
-		if err != nil {
-			log.Printf("[navidrome] star/unstar SQL err: %v", err)
+	// 2. 处理专辑 ID
+	songs := h.visibleSongs(user)
+	for _, aid := range albumIds {
+		cleanID := strings.TrimPrefix(aid, "al-")
+		for _, s := range songs {
+			album := strings.TrimSpace(s.Album)
+			if album == "" { album = "未知专辑" }
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			if genID(album+"|"+artist) == cleanID || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == cleanID {
+				h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+			}
+		}
+	}
+
+	// 3. 处理歌手 ID
+	for _, arid := range artistIds {
+		cleanID := strings.TrimPrefix(arid, "ar-")
+		for _, s := range songs {
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			for _, name := range splitArtists(artist) {
+				if genID(name) == cleanID || fmt.Sprintf("%x", md5.Sum([]byte(name))) == cleanID {
+					h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+				}
+			}
 		}
 	}
 
