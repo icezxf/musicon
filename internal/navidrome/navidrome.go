@@ -363,7 +363,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		id := genID(name)
 		out = append(out, map[string]any{
 			"playCount":             0,
-			"playDate":              nil,
+			"playDate":              time.Now().Format(time.RFC3339), // 防闪退
 			"rating":                0,
 			"starred":               false,
 			"starredAt":             nil,
@@ -414,15 +414,15 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		return
 	}
 
+	// 严格对齐文档，防止 Flutter 解析闪退
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount":             0,
-		"playDate":              nil,
+		"playDate":              time.Now().Format(time.RFC3339), // 必须是字符串
 		"rating":                0,
 		"starred":               false,
 		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
-		"coverArt":              id,
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
 		"genres":                nil,
@@ -485,7 +485,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": nil,
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nowStr,
 			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr,
 		})
@@ -516,7 +516,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
+					"playCount": 0, "playDate": time.Now().Format(time.RFC3339), "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 				}
 			}
@@ -608,9 +608,10 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 	dur := float64(s.Dur)
 	if dur <= 0 { dur = 0.1 }
 
+	// 严格对齐文档字段，确保不会因字段缺失或类型异常而闪退
 	return map[string]any{
 		"playCount":           0,
-		"playDate":            nil,
+		"playDate":            nowStr, // 防止 null 导致解析崩溃
 		"rating":              0,
 		"starred":             false,
 		"starredAt":           nil,
@@ -624,7 +625,6 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"albumArtistId":       arID,
 		"albumArtist":         albumArtist,
 		"albumId":             aID,
-		"coverArt":            s.ID,
 		"hasCoverArt":         true,
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
