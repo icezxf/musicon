@@ -360,14 +360,12 @@ func isStarred(r *http.Request) bool {
 	return v == "true" || v == "1"
 }
 
-// 获取主歌手名，统一各处的 ID 映射
 func primaryArtist(artist string) string {
 	parts := splitArtists(artist)
 	if len(parts) > 0 { return parts[0] }
 	return artist
 }
 
-// 文档要求的日期格式是年份字符串（如 "2013"），如果是 0 则给空
 func safeYear(year int) string {
 	if year <= 0 { return "" }
 	return strconv.Itoa(year)
@@ -398,7 +396,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			}
 			artistMap[name].songCount++
 			artistMap[name].size += s.FileSize
-			album, _, _, _, _ := cleanMovie(s)
+			album, _, _, _, _ := cleanSongMeta(s) // 【已修复】这里之前的 cleanMovie 拼写错误
 			artistAlbums[name][album] = true
 		}
 	}
@@ -421,7 +419,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"name":                  name,
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
-			"genres":                nil, // 文档允许 null
+			"genres":                nil,
 			"fullText":              " " + name,
 			"orderArtistName":       name,
 			"size":                  agg.size,
@@ -461,7 +459,6 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		}
 	}
 
-	// 【防崩溃】找不到返回兜底空对象，不返回 404
 	if artistName == "" { artistName = "未知歌手" }
 
 	favArtists := h.getFavoriteArtists(user)
@@ -551,14 +548,14 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
 			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, 
-			"date": safeYear(minYear), // 文档要求年份字符串
+			"date": safeYear(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, 
-			"releases": 1, // 文档是整数 1
+			"releases": 1, 
 			"compilation": false,
 			"songCount": agg.count, 
-			"duration": float64(agg.dur), // 文档是浮点数
+			"duration": float64(agg.dur), 
 			"size": agg.size, "genre": "", 
-			"genres": nil, // 文档允许 null
+			"genres": nil, 
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, 
 			"playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt, 
@@ -590,9 +587,9 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeYear(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, 
-					"releases": 1, // 文档是整数 1
+					"releases": 1, 
 					"compilation": false,
-					"genre": s.Genre, "genres": nil, // 文档允许 null
+					"genre": s.Genre, "genres": nil, 
 					"fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
@@ -606,7 +603,6 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		}
 	}
 	
-	// 【防崩溃】找不到返回兜底空对象，不返回 404
 	if outAlbum == nil {
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
@@ -629,7 +625,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = float64(totalDur) // 文档是浮点数
+	outAlbum["duration"] = float64(totalDur) 
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -685,7 +681,6 @@ func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user
 		if s.ID == id { found = &s; break }
 	}
 	
-	// 【防崩溃】找不到返回兜底，不返回 404
 	if found == nil {
 		json.NewEncoder(w).Encode(h.songObj(db.Song{ID: id, Title: "未知歌曲"}, "", "", false, time.Now().Format(time.RFC3339)))
 		return
@@ -708,7 +703,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 
 	return map[string]any{
 		"playCount":           0,
-		"playDate":            nil, // 未播放给 null 合法
+		"playDate":            nil, 
 		"rating":              0,
 		"starred":             isStarred,
 		"starredAt":           starredAt,
@@ -730,23 +725,23 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
-		"date":                safeYear(s.Year), // 文档是年份字符串
+		"date":                safeYear(s.Year), 
 		"originalYear":        0,
 		"releaseYear":         0,
 		"size":                s.FileSize,
 		"suffix":              suffix,
-		"duration":            float64(dur), // 文档是浮点数
+		"duration":            float64(dur), 
 		"bitRate":             s.Bitrate,
 		"channels":            s.Channels,
 		"genre":               s.Genre,
-		"genres":              nil, // 文档允许 null
+		"genres":              nil, 
 		"fullText":            " " + title + " " + album + " " + artist,
 		"orderTitle":          title,
 		"orderAlbumName":      album,
 		"orderArtistName":     artist,
 		"orderAlbumArtistName": albumArtist,
 		"compilation":         false,
-		"lyrics":              "[]", // 防解析崩溃
+		"lyrics":              "[]", 
 		"rgAlbumGain":         0.0,
 		"rgAlbumPeak":         0.0,
 		"rgTrackGain":         0.0,
