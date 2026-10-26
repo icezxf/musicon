@@ -30,6 +30,17 @@ type Handler struct {
 func New(database *db.Holder, am *alist.Manager, c *config.Config) *Handler {
 	h := &Handler{DB: database, AList: am, Cfg: c}
 	h.DB.DB.Exec("ALTER TABLE songs ADD COLUMN starred INTEGER DEFAULT 0")
+	
+	// 【核心新增】建立独立的收藏表，用于存储歌手和专辑的收藏状态
+	h.DB.DB.Exec(`
+		CREATE TABLE IF NOT EXISTS user_favorites (
+			username TEXT NOT NULL,
+			kind TEXT NOT NULL,      -- 'artist' 或 'album'
+			item_id TEXT NOT NULL,   -- 对应的 md5 ID
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (username, kind, item_id)
+		)
+	`)
 	return h
 }
 
@@ -186,10 +197,13 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 收藏处理 ====================
+// ==================== 收藏处理（彻底解耦独立） ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids []string
+	var albumIds []string
+	var artistIds []string
+
 	if r.Method == http.MethodPost {
 		var req struct {
 			Ids       []string `json:"ids"`
@@ -198,17 +212,42 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 			ids = req.Ids
+			albumIds = req.AlbumIds
+			artistIds = req.ArtistIds
 		}
 	}
 	if id := r.URL.Query().Get("id"); id != "" { ids = append(ids, id) }
-	
+	if aid := r.URL.Query().Get("albumId"); aid != "" { albumIds = append(albumIds, aid) }
+	if arid := r.URL.Query().Get("artistId"); arid != "" { artistIds = append(artistIds, arid) }
+
 	isStar := strings.HasSuffix(r.URL.Path, "/star")
 	val := 0
 	if isStar { val = 1 }
 
+	// 1. 处理歌曲收藏（更新 songs 表）
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+	}
+
+	// 2. 处理专辑收藏
+	for _, aid := range albumIds {
+		cleanID := strings.TrimPrefix(aid, "al-")
+		if isStar {
+			h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'album', ?)", user, cleanID)
+		} else {
+			h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'album' AND item_id = ?", user, cleanID)
+		}
+	}
+
+	// 3. 处理歌手收藏
+	for _, arid := range artistIds {
+		cleanID := strings.TrimPrefix(arid, "ar-")
+		if isStar {
+			h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'artist', ?)", user, cleanID)
+		} else {
+			h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'artist' AND item_id = ?", user, cleanID)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -228,6 +267,32 @@ func (h *Handler) getStarredMap() map[string]bool {
 		rows.Close()
 	}
 	return starredIDs
+}
+
+func (h *Handler) getFavoriteAlbums(user string) map[string]bool {
+	m := map[string]bool{}
+	rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'album'", user)
+	if err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil { m[id] = true }
+		}
+		rows.Close()
+	}
+	return m
+}
+
+func (h *Handler) getFavoriteArtists(user string) map[string]bool {
+	m := map[string]bool{}
+	rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'artist'", user)
+	if err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil { m[id] = true }
+		}
+		rows.Close()
+	}
+	return m
 }
 
 // ==================== 核心：音频流 302 ====================
@@ -313,14 +378,10 @@ func safeDate(year int) any {
 // ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
-	if isStarred(r) {
-		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]map[string]any{})
-		return
-	}
-
 	songs := h.visibleSongs(user)
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
+	starFilter := isStarred(r)
+	favArtists := h.getFavoriteArtists(user)
 
 	type artistAgg struct { name string; albumCount int; songCount int; size int64 }
 	artistMap := map[string]*artistAgg{}
@@ -330,6 +391,10 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		_, artist, _, _, _ := cleanSongMeta(s)
 		for _, name := range splitArtists(artist) {
 			if nameFilter != "" && !strings.Contains(strings.ToLower(name), nameFilter) { continue }
+			id := genID(name)
+			// 独立收藏过滤
+			if starFilter && !favArtists[id] { continue }
+
 			if _, ok := artistMap[name]; !ok {
 				artistMap[name] = &artistAgg{name: name}
 				artistAlbums[name] = map[string]bool{}
@@ -341,20 +406,25 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
+	nowStr := time.Now().Format(time.RFC3339)
 	out := make([]map[string]any, 0)
 	for name, agg := range artistMap {
 		id := genID(name)
+		isFav := favArtists[id]
+		var starredAt any = nil
+		if isFav { starredAt = nowStr }
+
 		out = append(out, map[string]any{
 			"playCount":             0,
 			"playDate":              nil,
 			"rating":                0,
-			"starred":               false,
-			"starredAt":             nil,
+			"starred":               isFav,
+			"starredAt":             starredAt,
 			"id":                    id,
 			"name":                  name,
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
-			"genres":                []string{}, // 强制空数组防止强转崩溃
+			"genres":                []string{},
 			"fullText":              " " + name,
 			"orderArtistName":       name,
 			"size":                  agg.size,
@@ -400,12 +470,17 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		return
 	}
 
+	favArtists := h.getFavoriteArtists(user)
+	isFav := favArtists[id]
+	var starredAt any = nil
+	if isFav { starredAt = time.Now().Format(time.RFC3339) }
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount":             0,
 		"playDate":              nil,
 		"rating":                0,
-		"starred":               false,
-		"starredAt":             nil,
+		"starred":               isFav,
+		"starredAt":             starredAt,
 		"id":                    id,
 		"name":                  artistName,
 		"albumCount":            len(albumSet),
@@ -424,15 +499,11 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 }
 
 func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string) {
-	if isStarred(r) {
-		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]map[string]any{})
-		return
-	}
-
 	songs := h.visibleSongs(user)
 	artistIDFilter := r.URL.Query().Get("artist_id")
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
+	starFilter := isStarred(r)
+	favAlbums := h.getFavoriteAlbums(user)
 
 	type albumAgg struct {
 		name string; artist string; count int; dur int; size int64
@@ -456,6 +527,10 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		if nameFilter != "" && !strings.Contains(strings.ToLower(album), nameFilter) { continue }
 
 		k := album + "|" + artist
+		id := genID(k)
+		// 独立收藏过滤
+		if starFilter && !favAlbums[id] { continue }
+
 		if _, ok := albumMap[k]; !ok {
 			albumMap[k] = &albumAgg{name: album, artist: artist, minYear: 9999, coverPath: s.CoverPath, paths: s.Path}
 		}
@@ -477,6 +552,10 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		
+		isFav := favAlbums[id]
+		var starredAt any = nil
+		if isFav { starredAt = nowStr }
+
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
 			"coverArt": id,
@@ -486,7 +565,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
+			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr,
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
@@ -532,6 +611,14 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 		return
 	}
+	
+	favAlbums := h.getFavoriteAlbums(user)
+	isFav := favAlbums[id]
+	var starredAt any = nil
+	if isFav { starredAt = time.Now().Format(time.RFC3339) }
+	
+	outAlbum["starred"] = isFav
+	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
 	outAlbum["duration"] = float64(totalDur)
 	outAlbum["size"] = totalSize
@@ -648,7 +735,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"orderArtistName":     artist,
 		"orderAlbumArtistName": albumArtist,
 		"compilation":         false,
-		"lyrics":              "[]", // 极其关键！传空数组字符串，千万不要传 ""
+		"lyrics":              "[]", // 防解析崩溃
 		"rgAlbumGain":         0.0,
 		"rgAlbumPeak":         0.0,
 		"rgTrackGain":         0.0,
