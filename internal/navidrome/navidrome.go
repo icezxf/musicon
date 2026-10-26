@@ -344,13 +344,19 @@ func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string)
 	return
 }
 
+func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 【绝对兜底】强制拦截年份和日期
-func safeDate(year int) string {
-	if year <= 0 { return "1970" }
-	return fmt.Sprintf("%04d", year) 
+// 【绝对标准】只返回年份字符串，空则返回空字符串
+func safeSongDate(year int) string {
+	if year <= 0 { return "" }
+	return strconv.Itoa(year)
+}
+
+func safeAlbumDate(year int) string {
+	if year <= 0 { return "" }
+	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
 }
 
 // ==================== 歌手与专辑 ====================
@@ -385,10 +391,10 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		var starredAt any = "1970-01-01T00:00:00Z" // 兜底
+		var starredAt any = nil
 		if isFav { starredAt = nowStr }
 		out = append(out, map[string]any{
-			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
+			"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
 			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
 			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
 			"mbzArtistId": "", "smallImageUrl": nil, "mediumImageUrl": nil, "largeImageUrl": nil,
@@ -428,11 +434,11 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 
 	favArtists := h.getFavoriteArtists(user)
 	isFav := favArtists[searchID]
-	var starredAt any = "1970-01-01T00:00:00Z"
+	var starredAt any = nil
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 
 	json.NewEncoder(w).Encode(map[string]any{
-		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
+		"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
 		"id": id, "name": artistName, "coverArt": searchID,
 		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
@@ -485,13 +491,13 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		isFav := favAlbums[id]
-		var starredAt any = "1970-01-01T00:00:00Z"
+		var starredAt any = nil
 		if isFav { starredAt = nowStr }
 
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath, "coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
-			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
+			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeAlbumDate(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, 
 			"releases": 1, 
 			"compilation": false,
@@ -499,7 +505,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"duration": float64(agg.dur) + 0.001, 
 			"size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
 			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr, "mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
@@ -527,11 +533,11 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 				outAlbum = map[string]any{
 					"id": id, "name": album, "embedArtPath": s.CoverPath, "coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
-					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
+					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeAlbumDate(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z",
+					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 					"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 				}
@@ -545,18 +551,18 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
-			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeDate(0),
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeAlbumDate(0),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
-			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
-			"rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z", "externalInfoUpdatedAt": nil,
+			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
+			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
 			"createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		}
 	}
 	favAlbums := h.getFavoriteAlbums(user)
 	isFav := favAlbums[searchID]
-	var starredAt any = "1970-01-01T00:00:00Z"
+	var starredAt any = nil
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
@@ -627,33 +633,24 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
 	
-	trackNum := s.TrackNumber
-	if trackNum <= 0 { trackNum = 1 }
-	discNum := s.DiscNumber
-	if discNum <= 0 { discNum = 1 }
-
-	var starredAt any = "1970-01-01T00:00:00Z"
+	var starredAt any = nil
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
-		"playCount": 0, 
-		"playDate": "1970-01-01T00:00:00Z", 
-		"rating": 0, 
-		"starred": isStarred, 
-		"starredAt": starredAt,
+		"playCount": 0, "playDate": nil, "rating": 0, "starred": isStarred, "starredAt": starredAt,
 		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
 		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
 		"coverArt": s.ID, "hasCoverArt": true, 
-		"trackNumber": trackNum, // 【绝对兜底】不能为0
-		"discNumber": discNum, // 【绝对兜底】不能为0
+		"trackNumber": maxNum(1, s.TrackNumber), 
+		"discNumber": maxNum(1, s.DiscNumber),
 		"year": s.Year, 
-		"date": safeDate(s.Year), 
+		"date": safeSongDate(s.Year), 
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix, 
 		"duration": float64(dur) + 0.001, 
 		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre, "genres": []string{},
 		"fullText": " " + title + " " + album + " " + artist, "orderTitle": title, "orderAlbumName": album, 
 		"orderArtistName": artist, "orderAlbumArtistName": albumArtist, "compilation": false, 
-		"lyrics": "[{\"lang\":\"xxx\",\"line\":[{\"start\":0,\"value\":\" \"}],\"synced\":false}]", 
+		"lyrics": "", 
 		"rgAlbumGain": -6.4, "rgAlbumPeak": 0.810242, "rgTrackGain": -6.4, "rgTrackPeak": 0.810242,
 		"createdAt": nowStr, "updatedAt": nowStr,
 	}
