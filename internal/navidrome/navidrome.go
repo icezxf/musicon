@@ -287,7 +287,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
-			"coverArt":              id, // 【修复】保留 coverArt 方便客户端拉图
+			"coverArt":              id, // 客户端靠它拉歌手图
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
 			"genres":                nil,
@@ -340,7 +340,7 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
-		"coverArt":              id, // 【修复】
+		"coverArt":              id,
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
 		"genres":                nil,
@@ -397,7 +397,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		if minYear == 9999 { minYear = 0 }
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
-			"coverArt": id, // 【修复】
+			"coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
 			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": strconv.Itoa(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
@@ -428,7 +428,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 				arID := genID(artist)
 				outAlbum = map[string]any{
 					"id": id, "name": album, "embedArtPath": s.CoverPath,
-					"coverArt": id, // 【修复】
+					"coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": strconv.Itoa(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
@@ -526,7 +526,6 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 	dur := float64(s.Dur)
 	if dur <= 0 { dur = 0.1 }
 
-	// 【修复】严格按照你发的那份 JSON 补齐所有字段
 	return map[string]any{
 		"playCount":           0,
 		"playDate":            nil,
@@ -543,8 +542,8 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"albumArtistId":       arID,
 		"albumArtist":         albumArtist,
 		"albumId":             aID,
-		"coverArt":            aID,    // 【修复】歌曲封面复用专辑ID
-		"hasCoverArt":         true,   // 【修复】强制为 true，客户端才会去请求图片
+		"coverArt":            aID,    // 必须保留，让客户端拿着专辑ID去拉图
+		"hasCoverArt":         true,   // 必须保留，客户端靠这个判断是否有图
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
