@@ -219,14 +219,10 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		h.search(w, r, u, "searchResult2")
 	case "search3":
 		h.search(w, r, u, "searchResult3")
-	case "star":
-		h.handleStar(w, r, u, true)
-	case "unstar":
-		h.handleStar(w, r, u, false)
-	case "getStarred":
-		h.getStarred(w, r, u, "starred")
-	case "getStarred2":
-		h.getStarred(w, r, u, "starred2")
+	case "star", "unstar":
+		h.handleStar(w, r, u, p == "star")
+	case "getStarred", "getStarred2":
+		h.handleGetStarred(w, r, u, p == "getStarred2")
 	case "getUser":
 		var role string
 		h.DB.DB.QueryRow(`SELECT role FROM subsonic_users WHERE username=?`, u).Scan(&role)
@@ -244,67 +240,103 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 // ==================== 收藏处理 ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string, isStar bool) {
-	var ids []string
-
-	// 尝试解析 POST Body (OpenSubsonic 标准)
-	if r.Method == http.MethodPost {
-		var req struct {
-			Ids []string `json:"ids"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
-			ids = req.Ids
-		}
-	}
-
-	// 兼容 Query 参数
-	if len(ids) == 0 {
-		if id := r.URL.Query().Get("id"); id != "" {
-			ids = []string{id}
-		}
-	}
-
+	q := r.URL.Query()
 	val := 0
 	if isStar {
 		val = 1
 	}
 
-	// 写入数据库（如果 songs 表有 starred 字段，即刻生效）
-	for _, id := range ids {
+	// 处理歌曲 ID
+	if id := q.Get("id"); id != "" {
 		cleanID := strings.TrimPrefix(id, "mf-")
-		_, err := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
-		if err != nil {
-			log.Printf("[subsonic] star SQL err: %v", err)
+		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+	}
+
+	// 处理专辑 ID
+	if aid := q.Get("albumId"); aid != "" {
+		cleanID := strings.TrimPrefix(aid, "al-")
+		songs := h.visibleSongs(user)
+		for _, s := range songs {
+			album := strings.TrimSpace(s.Album)
+			if album == "" { album = "未知专辑" }
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			if albumID(album, artist) == "al-"+cleanID || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == cleanID {
+				h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+			}
+		}
+	}
+
+	// 处理歌手 ID
+	if arid := q.Get("artistId"); arid != "" {
+		cleanID := strings.TrimPrefix(arid, "ar-")
+		songs := h.visibleSongs(user)
+		for _, s := range songs {
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			for _, name := range splitArtists(artist) {
+				if artistID(name) == "ar-"+cleanID || fmt.Sprintf("%x", md5.Sum([]byte(name))) == cleanID {
+					h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+				}
+			}
 		}
 	}
 
 	h.writeOK(w, r, map[string]any{})
 }
 
-func (h *Handler) getStarred(w http.ResponseWriter, r *http.Request, user string, key string) {
+func (h *Handler) handleGetStarred(w http.ResponseWriter, r *http.Request, user string, isStarred2 bool) {
 	songs := h.visibleSongs(user)
-	starredIDs := map[string]bool{}
-
-	// 查库
+	
+	var starredIDs = map[string]bool{}
 	rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1")
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var id string
 			if rows.Scan(&id) == nil {
 				starredIDs[id] = true
 			}
 		}
+		rows.Close()
 	}
-
+	
 	var starredSongs []map[string]any
+	var starredAlbums []map[string]any
+	var starredArtists []map[string]any
+	albumSet := map[string]bool{}
+	artistSet := map[string]bool{}
+	
 	for i := range songs {
 		if starredIDs[songs[i].ID] {
 			starredSongs = append(starredSongs, songToMap(&songs[i]))
+			
+			// 聚合专辑
+			aID := albumID(songs[i].Album, songs[i].Artist)
+			if !albumSet[aID] {
+				albumSet[aID] = true
+				starredAlbums = append(starredAlbums, albumToMap(songs[i].Album, songs[i].Artist, 1, songs[i].Dur))
+			}
+			
+			// 聚合歌手
+			for _, name := range splitArtists(songs[i].Artist) {
+				arID := artistID(name)
+				if !artistSet[arID] {
+					artistSet[arID] = true
+					starredArtists = append(starredArtists, map[string]any{
+						"@id": arID, "@name": name, "@albumCount": 1, "@songCount": 1,
+					})
+				}
+			}
 		}
 	}
-
+	
+	key := "starred"
+	if isStarred2 {
+		key = "starred2"
+	}
+	
 	h.writeOK(w, r, map[string]any{key: map[string]any{
-		"artist": []any{}, "album": []any{}, "song": starredSongs,
+		"artist": starredArtists, "album": starredAlbums, "song": starredSongs,
 	}})
 }
 
@@ -1274,18 +1306,19 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		typ = "artist"
 	}
 
+	songs := h.visibleSongs(user)
+
 	// 2. 如果是歌曲类型，直接匹配歌曲 ID
 	if typ == "song" {
-		for _, s := range h.visibleSongs(user) {
+		for _, s := range songs {
 			if s.ID == id {
 				if s.CoverPath != "" {
-					log.Printf("[getCoverArt] 匹配到歌曲封面: %s", s.CoverPath)
 					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
 					return
 				}
-				for _, s2 := range h.visibleSongs(user) {
+				// 找同专辑
+				for _, s2 := range songs {
 					if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
-						log.Printf("[getCoverArt] 匹配到同专辑封面: %s", s2.CoverPath)
 						if size > 0 { h.serveThumb(w, r, s2.CoverPath, size) } else { serveLocalCover(w, r, s2.CoverPath) }
 						return
 					}
@@ -1294,18 +1327,23 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 3. 如果是专辑类型，匹配专辑 ID (支持 8 位和 32 位)
+	// 3. 如果是专辑类型，匹配专辑 ID
+	var targetAlbum, targetArtist string
 	if typ == "album" {
-		for _, s := range h.visibleSongs(user) {
+		for _, s := range songs {
 			album := strings.TrimSpace(s.Album)
 			if album == "" { album = "未知专辑" }
 			artist := strings.TrimSpace(s.Artist)
 			if artist == "" { artist = "未知歌手" }
-			
-			if (albumID(album, artist) == "al-"+id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id) && s.CoverPath != "" {
-				log.Printf("[getCoverArt] 匹配到专辑封面: %s", s.CoverPath)
-				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
-				return
+
+			if albumID(album, artist) == "al-"+id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id {
+				if s.CoverPath != "" {
+					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+					return
+				}
+				// 记住名字，如果本地没图，等会儿去网上搜
+				targetAlbum = album
+				targetArtist = artist
 			}
 		}
 	}
@@ -1316,12 +1354,33 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 
-	// 5. 兼容旧逻辑（无前缀，无 type 的猜测）
-	// 先尝试全量本地匹配
-	for _, s := range h.visibleSongs(user) {
+	// 5. 兜底逻辑：本地没图，去网易云搜专辑图
+	if targetAlbum != "" && h.NCM != nil {
+		log.Printf("[getCoverArt] 本地无图，尝试从网易云搜索专辑图: %s - %s", targetArtist, targetAlbum)
+		searchURL := fmt.Sprintf("http://127.0.0.1:3000/cloudsearch?keywords=%s %s&type=10&limit=1", url.QueryEscape(targetArtist), url.QueryEscape(targetAlbum))
+		resp, err := http.Get(searchURL)
+		if err == nil {
+			defer resp.Body.Close()
+			var res struct {
+				Result struct {
+					Albums []struct {
+						PicUrl string `json:"picUrl"`
+					} `json:"albums"`
+				} `json:"result"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&res) == nil && len(res.Result.Albums) > 0 && res.Result.Albums[0].PicUrl != "" {
+				log.Printf("[getCoverArt] 网易云搜到专辑图: %s", res.Result.Albums[0].PicUrl)
+				if proxyImage(w, res.Result.Albums[0].PicUrl) {
+					return
+				}
+			}
+		}
+	}
+
+	// 6. 兼容旧逻辑
+	for _, s := range songs {
 		if s.ID == rawID || albumID(s.Album, s.Artist) == rawID || fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == rawID {
 			if s.CoverPath != "" {
-				log.Printf("[getCoverArt] 兼容匹配到封面: %s", s.CoverPath)
 				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
 				return
 			}
