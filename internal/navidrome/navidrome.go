@@ -190,9 +190,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids []string
-
-	// 核心修复1：拦截并抛弃客户端传来的 albumIds 和 artistIds
-	// 因为数据库不支持独立存储，如果接收就会导致点一首歌把整张专辑全搞红
 	if r.Method == http.MethodPost {
 		var req struct {
 			Ids       []string `json:"ids"`
@@ -203,14 +200,12 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 			ids = req.Ids
 		}
 	}
-
 	if id := r.URL.Query().Get("id"); id != "" { ids = append(ids, id) }
 	
 	isStar := strings.HasSuffix(r.URL.Path, "/star")
 	val := 0
 	if isStar { val = 1 }
 
-	// 只更新歌曲状态，绝不级联
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
@@ -304,30 +299,23 @@ func isStarred(r *http.Request) bool {
 	return v == "true" || v == "1"
 }
 
-// 获取主歌手名，解决 ID 映射不一致导致的详情页查询不到的问题
 func primaryArtist(artist string) string {
 	parts := splitArtists(artist)
-	if len(parts) > 0 {
-		return parts[0]
-	}
+	if len(parts) > 0 { return parts[0] }
 	return artist
 }
 
-// 防止年份为 0 时返回非法的 "0" 导致 Flutter DateTime.parse 崩溃
 func safeDate(year int) any {
-	if year <= 0 {
-		return "0001-01-01T00:00:00Z"
-	}
+	if year <= 0 { return "0001-01-01T00:00:00Z" }
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
 }
 
 // ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
-	// 核心修复2：由于不支持单独收藏歌手，强行拦截前端请求。防止和歌曲收藏产生同步。
 	if isStarred(r) {
 		w.Header().Set("x-total-count", "0")
-		json.NewEncoder(w).Encode([]map[string]any{}) // 必须返回 []，不能是 null
+		json.NewEncoder(w).Encode([]map[string]any{})
 		return
 	}
 
@@ -353,24 +341,27 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	out := make([]map[string]any, 0) // 确保为 []
+	out := make([]map[string]any, 0)
 	for name, agg := range artistMap {
 		id := genID(name)
 		out = append(out, map[string]any{
 			"playCount":             0,
 			"playDate":              nil,
 			"rating":                0,
-			"starred":               false, // 强制 false，因为不支持单独收藏
+			"starred":               false,
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
-			"coverArt":              id,
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
-			"genres":                nil,
+			"genres":                []string{}, // 强制空数组防止强转崩溃
 			"fullText":              " " + name,
 			"orderArtistName":       name,
 			"size":                  agg.size,
+			"mbzArtistId":           "",
+			"smallImageUrl":         nil,
+			"mediumImageUrl":        nil,
+			"largeImageUrl":         nil,
 			"externalUrl":           "https://www.last.fm/music/" + name,
 			"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 		})
@@ -413,23 +404,26 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		"playCount":             0,
 		"playDate":              nil,
 		"rating":                0,
-		"starred":               false, // 强制 false
+		"starred":               false,
 		"starredAt":             nil,
 		"id":                    id,
 		"name":                  artistName,
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
-		"genres":                nil,
+		"genres":                []string{},
 		"fullText":              " " + artistName,
 		"orderArtistName":       artistName,
 		"size":                  totalSize,
+		"mbzArtistId":           "",
+		"smallImageUrl":         nil,
+		"mediumImageUrl":        nil,
+		"largeImageUrl":         nil,
 		"externalUrl":           "https://www.last.fm/music/" + artistName,
 		"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
 
 func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string) {
-	// 核心修复3：同理，拦截前端请求收藏专辑的请求
 	if isStarred(r) {
 		w.Header().Set("x-total-count", "0")
 		json.NewEncoder(w).Encode([]map[string]any{})
@@ -449,7 +443,6 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 	for _, s := range songs {
 		album, artist, _, _, _ := cleanSongMeta(s)
 		
-		// 修复歌手过滤时的 ID 映射问题
 		if artistIDFilter != "" {
 			matched := false
 			for _, n := range splitArtists(artist) {
@@ -477,12 +470,10 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 	}
 
 	nowStr := time.Now().Format(time.RFC3339)
-	out := make([]map[string]any, 0) // 确保为 []
+	out := make([]map[string]any, 0)
 	for _, agg := range albumMap {
 		id := genID(agg.name + "|" + agg.artist)
-		// 修复歌手 ID 统一
 		arID := genID(primaryArtist(agg.artist))
-		
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		
@@ -492,11 +483,12 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
 			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": nil,
+			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
 			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr,
+			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
@@ -523,10 +515,11 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
+					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
+					"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 				}
 			}
 			songCount++
@@ -565,10 +558,7 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 		if artistIDFilter != "" {
 			matched := false
 			for _, n := range splitArtists(artist) {
-				if genID(n) == artistIDFilter {
-					matched = true
-					break
-				}
+				if genID(n) == artistIDFilter { matched = true; break }
 			}
 			if !matched { continue }
 		}
@@ -578,11 +568,11 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 	}
 
 	nowStr := time.Now().Format(time.RFC3339)
-	out := make([]map[string]any, 0) // 确保为 []
+	out := make([]map[string]any, 0)
 	for _, s := range filtered {
 		album, artist, _, _, _ := cleanSongMeta(s)
 		aID := genID(album + "|" + artist)
-		arID := genID(primaryArtist(artist)) // 统一歌手 ID
+		arID := genID(primaryArtist(artist))
 		out = append(out, h.songObj(s, aID, arID, starredMap[s.ID], nowStr))
 	}
 
@@ -616,18 +606,19 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	if dur <= 0 { dur = 0.1 }
 
 	var starredAt any = nil
-	if isStarred {
-		starredAt = nowStr
-	}
+	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
 		"playCount":           0,
-		"playDate":            nil, // 没播放一定给 nil
+		"playDate":            nil,
 		"rating":              0,
 		"starred":             isStarred,
 		"starredAt":           starredAt,
 		"bookmarkPosition":    0,
 		"id":                  s.ID,
+		"isDir":               false,
+		"type":                "music",
+		"mediaType":           "song",
 		"path":                s.Path,
 		"title":               title,
 		"album":               album,
@@ -650,20 +641,28 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"bitRate":             s.Bitrate,
 		"channels":            s.Channels,
 		"genre":               s.Genre,
-		"genres":              nil,
+		"genres":              []string{},
 		"fullText":            " " + title + " " + album + " " + artist,
 		"orderTitle":          title,
 		"orderAlbumName":      album,
 		"orderArtistName":     artist,
 		"orderAlbumArtistName": albumArtist,
 		"compilation":         false,
-		"lyrics":              "",
+		"lyrics":              "[]", // 极其关键！传空数组字符串，千万不要传 ""
 		"rgAlbumGain":         0.0,
 		"rgAlbumPeak":         0.0,
 		"rgTrackGain":         0.0,
 		"rgTrackPeak":         0.0,
 		"createdAt":           nowStr,
 		"updatedAt":           nowStr,
+		"bpm":                 0,
+		"comment":             "",
+		"moods":               []string{},
+		"sortName":            title,
+		"discSubtitle":        "",
+		"mbzTrackId":          "",
+		"mbzAlbumId":          "",
+		"mbzArtistId":         "",
 	}
 }
 
@@ -684,7 +683,6 @@ func (h *Handler) handlePlaylistRoot(w http.ResponseWriter, r *http.Request, use
 			w.Write([]byte(`{"error":"bad request"}`))
 			return
 		}
-		
 		id, err := h.DB.CreatePlaylist(req.Name, req.Comment, user, req.Public)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -731,12 +729,10 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				w.Write([]byte(`{"error":"bad request"}`))
 				return
 			}
-			
 			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
 			h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id)
 			b := 0; if req.Public { b = 1 }
 			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id)
-			
 			w.Write([]byte("{}"))
 		}
 	} else if len(parts) == 3 && parts[2] == "tracks" {
@@ -754,23 +750,17 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				w.Write([]byte(`{"error":"bad request"}`))
 				return
 			}
-			
 			if req.Ids != nil {
 				if arr, ok := req.Ids.([]interface{}); ok {
 					for _, item := range arr {
-						if s, ok := item.(string); ok {
-							songIDs = append(songIDs, s)
-						}
+						if s, ok := item.(string); ok { songIDs = append(songIDs, s) }
 					}
 				} else if str, ok := req.Ids.(string); ok {
 					songIDs = strings.Split(str, ",")
 				}
 			}
-			
 			if len(songIDs) > 0 {
-				log.Printf("[navidrome] adding %d songs to playlist %s", len(songIDs), id)
 				if err := h.DB.AddSongsToPlaylist(id, songIDs); err != nil {
-					log.Printf("[navidrome] AddSongsToPlaylist err: %v", err)
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write([]byte(`{"error":"add failed"}`))
 					return
@@ -788,9 +778,7 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				}
 			}
 			if len(toRemove) > 0 {
-				if err := h.DB.RemoveSongsFromPlaylist(id, toRemove); err != nil {
-					log.Printf("[navidrome] RemoveSongsFromPlaylist err: %v", err)
-				}
+				h.DB.RemoveSongsFromPlaylist(id, toRemove)
 			}
 			w.Write([]byte("{}"))
 		}
@@ -801,7 +789,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 	pls, _ := h.DB.ListPlaylists()
 	role := h.DB.GetUserRole(user)
 	nowStr := time.Now().Format(time.RFC3339)
-	out := make([]map[string]any, 0) // 确保为 []
+	out := make([]map[string]any, 0)
 	for _, p := range pls {
 		if role != "admin" && p.Owner != user && !p.Public { continue }
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
@@ -846,7 +834,7 @@ func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, 
 func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, user string) {
 	songs, _ := h.DB.GetPlaylistSongs(id)
 	nowStr := time.Now().Format(time.RFC3339)
-	out := make([]map[string]any, 0) // 确保为 []
+	out := make([]map[string]any, 0)
 	starredMap := h.getStarredMap()
 	
 	for idx, s := range songs {
@@ -855,12 +843,10 @@ func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, 
 		arID := genID(primaryArtist(artist))
 		
 		sObj := h.songObj(s, aID, arID, starredMap[s.ID], nowStr)
-		// 保留真实歌曲 ID，额外赋予列表序号
 		sObj["id"] = s.ID
 		sObj["mediaFileId"] = s.ID
 		sObj["playlistEntryId"] = strconv.Itoa(idx + 1)
 		sObj["playlistId"] = id
-		
 		out = append(out, sObj)
 	}
 	total := len(out)
@@ -886,10 +872,7 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 }
 
 func paginate(data []map[string]any, r *http.Request) []map[string]any {
-	// 终极拦截：绝不让空指针流向客户端
-	if data == nil {
-		return []map[string]any{}
-	}
+	if data == nil { return []map[string]any{} }
 	start, _ := strconv.Atoi(r.URL.Query().Get("_start"))
 	end, _ := strconv.Atoi(r.URL.Query().Get("_end"))
 	if start > len(data) { start = len(data) }
@@ -897,9 +880,7 @@ func paginate(data []map[string]any, r *http.Request) []map[string]any {
 	if start > end { start = end }
 	
 	res := data[start:end]
-	if res == nil {
-		return []map[string]any{}
-	}
+	if res == nil { return []map[string]any{} }
 	return res
 }
 
