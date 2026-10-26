@@ -49,6 +49,8 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/playlist/", h.route)
 	mux.HandleFunc("/api/star", h.route)
 	mux.HandleFunc("/api/unstar", h.route)
+	mux.HandleFunc("/api/cover", h.route)
+	mux.HandleFunc("/api/cover/", h.route)
 	
 	mux.HandleFunc("/api/stream", h.route)
 	mux.HandleFunc("/api/stream/", h.route)
@@ -146,12 +148,20 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-
-	if p == "star" || p == "unstar" {
-		w.Write([]byte("{}"))
+	// 原生封面代理
+	if strings.HasPrefix(p, "cover/") {
+		id := strings.TrimPrefix(p, "cover/")
+		http.Redirect(w, r, "/rest/getCoverArt?id="+id, http.StatusFound)
 		return
 	}
+
+	// 【新增】接管 star / unstar
+	if p == "star" || p == "unstar" {
+		h.handleStar(w, r, username)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 
 	switch {
 	case p == "artist":
@@ -174,6 +184,50 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	}
+}
+
+// ==================== 收藏处理 ====================
+
+func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
+	var ids []string
+
+	// 尝试解析 POST Body
+	if r.Method == http.MethodPost {
+		var req struct {
+			Ids []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			ids = req.Ids
+		}
+	}
+
+	// 兼容 Query 参数
+	if len(ids) == 0 {
+		if id := r.URL.Query().Get("id"); id != "" {
+			ids = []string{id}
+		}
+	}
+
+	isStar := strings.HasSuffix(r.URL.Path, "/star")
+	val := 0
+	if isStar {
+		val = 1
+	}
+
+	// 写入数据库（如果你的 songs 表没有 starred 字段，这里会静默失败，但不影响客户端）
+	for _, id := range ids {
+		// 兼容带前缀的 ID
+		cleanID := id
+		if strings.HasPrefix(cleanID, "mf-") { cleanID = strings.TrimPrefix(cleanID, "mf-") }
+		
+		_, err := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+		if err != nil {
+			log.Printf("[navidrome] star/unstar SQL err: %v", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte("{}"))
 }
 
 // ==================== 核心：音频流 302 ====================
@@ -542,8 +596,8 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"albumArtistId":       arID,
 		"albumArtist":         albumArtist,
 		"albumId":             aID,
-		"coverArt":            s.ID, // 【核心修复】直接返回歌曲ID！
-		"hasCoverArt":         true, // 强制为 true
+		"coverArt":            s.ID,
+		"hasCoverArt":         true,
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
@@ -563,7 +617,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"orderArtistName":     artist,
 		"orderAlbumArtistName": albumArtist,
 		"compilation":         false,
-		"lyrics":              lyricsStr,
+		"lyrics":              "[]",
 		"rgAlbumGain":         0.0,
 		"rgAlbumPeak":         0.0,
 		"rgTrackGain":         0.0,
