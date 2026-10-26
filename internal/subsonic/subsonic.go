@@ -1199,30 +1199,48 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 
 	log.Printf("[getCoverArt] 收到请求 id=%s typ=%s size=%d", id, typ, size)
 
-	// 1. 优先尝试本地匹配歌曲/专辑封面（不管是 8 位还是 32 位，不管有没有 type）
-	coverPath := h.findCoverPath(id, typ, user)
-	if coverPath != "" {
-		log.Printf("[getCoverArt] 本地匹配到封面: %s", coverPath)
-		if size > 0 {
-			h.serveThumb(w, r, coverPath, size)
-		} else {
-			serveLocalCover(w, r, coverPath)
+	// ============== 核心修复：本地绝对优先匹配 ==============
+	songs := h.visibleSongs(user)
+	
+	// 1. 先查是不是歌曲 ID
+	for _, s := range songs {
+		if s.ID == id {
+			if s.CoverPath != "" {
+				log.Printf("[getCoverArt] 匹配到歌曲封面: %s", s.CoverPath)
+				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+				return
+			}
+			// 如果这首歌没封面，找它同专辑的歌
+			for _, s2 := range songs {
+				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
+					log.Printf("[getCoverArt] 匹配到同专辑封面: %s", s2.CoverPath)
+					if size > 0 { h.serveThumb(w, r, s2.CoverPath, size) } else { serveLocalCover(w, r, s2.CoverPath) }
+					return
+				}
+			}
 		}
-		return
 	}
 
-	// 2. 如果本地没匹配到，且明确是歌手，才去查 NCM
-	if typ == "artist" || strings.HasPrefix(id, "ar-") {
-		log.Printf("[getCoverArt] 本地无匹配，明确为歌手，查 NCM")
-		h.serveArtistCover(w, r, user, id, size)
-		return
-	}
+	// 2. 再查是不是专辑 ID (支持 al- 前缀 或 32位MD5)
+	for _, s := range songs {
+		album := strings.TrimSpace(s.Album)
+		if album == "" { album = "未知专辑" }
+		artist := strings.TrimSpace(s.Artist)
+		if artist == "" { artist = "未知歌手" }
 
-	// 3. 如果本地没匹配到，且是 32 位 MD5，尝试解析为歌手名并查 NCM
-	if len(id) == 32 {
+		if (albumID(album, artist) == id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id) && s.CoverPath != "" {
+			log.Printf("[getCoverArt] 匹配到专辑封面: %s", s.CoverPath)
+			if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+			return
+		}
+	}
+	// =======================================================
+
+	// 3. 只有本地彻底没找到，且明确是歌手，才去查 NCM
+	if typ == "artist" || strings.HasPrefix(id, "ar-") || len(id) == 32 {
 		name := h.resolveArtistName(id, user)
 		if name != id && name != "" {
-			log.Printf("[getCoverArt] 本地无匹配，32位ID解析为歌手 %s，查 NCM", name)
+			log.Printf("[getCoverArt] 本地无匹配，尝试查歌手 %s", name)
 			if h.NCM != nil {
 				if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
 					if proxyImage(w, d.Pic) {
