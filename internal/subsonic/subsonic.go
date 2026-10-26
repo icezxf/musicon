@@ -246,39 +246,68 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		val = 1
 	}
 
-	// 处理歌曲 ID
-	if id := q.Get("id"); id != "" {
-		cleanID := strings.TrimPrefix(id, "mf-")
-		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
-	}
+	albumId := q.Get("albumId")
+	artistId := q.Get("artistId")
 
-	// 处理专辑 ID
-	if aid := q.Get("albumId"); aid != "" {
-		cleanID := strings.TrimPrefix(aid, "al-")
-		songs := h.visibleSongs(user)
-		for _, s := range songs {
-			album := strings.TrimSpace(s.Album)
-			if album == "" { album = "未知专辑" }
-			artist := strings.TrimSpace(s.Artist)
-			if artist == "" { artist = "未知歌手" }
-			if albumID(album, artist) == "al-"+cleanID || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == cleanID {
-				h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+	// 【核心修复】如果有专辑或歌手 ID，则强行忽略歌曲 ID，防止前端一收藏歌手就把所有歌也收藏了
+	if albumId == "" && artistId == "" {
+		if ids := q["id"]; len(ids) > 0 {
+			for _, id := range ids {
+				cleanID := strings.TrimPrefix(id, "mf-")
+				h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
 			}
 		}
 	}
 
-	// 处理歌手 ID
-	if arid := q.Get("artistId"); arid != "" {
-		cleanID := strings.TrimPrefix(arid, "ar-")
-		songs := h.visibleSongs(user)
-		for _, s := range songs {
-			artist := strings.TrimSpace(s.Artist)
-			if artist == "" { artist = "未知歌手" }
-			for _, name := range splitArtists(artist) {
-				if artistID(name) == "ar-"+cleanID || fmt.Sprintf("%x", md5.Sum([]byte(name))) == cleanID {
-					h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, s.ID)
+	// 1. 处理专辑 ID
+	if albumId != "" {
+		cleanID := strings.TrimPrefix(albumId, "al-")
+		// 如果是 8 位的 subsonic 格式（如 al-12345678），转为 32 位 MD5 存库
+		if len(cleanID) == 8 {
+			songs := h.visibleSongs(user)
+			for _, s := range songs {
+				album := strings.TrimSpace(s.Album)
+				if album == "" {
+					album = "未知专辑"
+				}
+				artist := strings.TrimSpace(s.Artist)
+				if artist == "" {
+					artist = "未知歌手"
+				}
+				if albumID(album, artist) == albumId || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == cleanID {
+					cleanID = fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist)))
+					break
 				}
 			}
+		}
+		if isStar {
+			h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'album', ?)", user, cleanID)
+		} else {
+			h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'album' AND item_id = ?", user, cleanID)
+		}
+	}
+
+	// 2. 处理歌手 ID
+	if artistId != "" {
+		cleanID := strings.TrimPrefix(artistId, "ar-")
+		if len(cleanID) == 8 {
+			songs := h.visibleSongs(user)
+			for _, s := range songs {
+				for _, name := range splitArtists(s.Artist) {
+					if artistID(name) == artistId || fmt.Sprintf("%x", md5.Sum([]byte(name))) == cleanID {
+						cleanID = fmt.Sprintf("%x", md5.Sum([]byte(name)))
+						break
+					}
+				}
+				if len(cleanID) == 32 {
+					break
+				}
+			}
+		}
+		if isStar {
+			h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'artist', ?)", user, cleanID)
+		} else {
+			h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'artist' AND item_id = ?", user, cleanID)
 		}
 	}
 
@@ -287,10 +316,10 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 
 func (h *Handler) handleGetStarred(w http.ResponseWriter, r *http.Request, user string, isStarred2 bool) {
 	songs := h.visibleSongs(user)
-	
+
+	// 1. 获取收藏歌曲
 	var starredIDs = map[string]bool{}
-	rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1")
-	if err == nil {
+	if rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1"); err == nil {
 		for rows.Next() {
 			var id string
 			if rows.Scan(&id) == nil {
@@ -299,42 +328,75 @@ func (h *Handler) handleGetStarred(w http.ResponseWriter, r *http.Request, user 
 		}
 		rows.Close()
 	}
-	
+
 	var starredSongs []map[string]any
-	var starredAlbums []map[string]any
-	var starredArtists []map[string]any
-	albumSet := map[string]bool{}
-	artistSet := map[string]bool{}
-	
 	for i := range songs {
 		if starredIDs[songs[i].ID] {
 			starredSongs = append(starredSongs, songToMap(&songs[i]))
-			
-			// 聚合专辑
-			aID := albumID(songs[i].Album, songs[i].Artist)
-			if !albumSet[aID] {
-				albumSet[aID] = true
-				starredAlbums = append(starredAlbums, albumToMap(songs[i].Album, songs[i].Artist, 1, songs[i].Dur))
+		}
+	}
+
+	// 2. 获取独立收藏的专辑
+	favAlbumsMap := map[string]bool{}
+	if rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'album'", user); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				favAlbumsMap[id] = true
 			}
-			
-			// 聚合歌手
-			for _, name := range splitArtists(songs[i].Artist) {
-				arID := artistID(name)
-				if !artistSet[arID] {
-					artistSet[arID] = true
-					starredArtists = append(starredArtists, map[string]any{
-						"@id": arID, "@name": name, "@albumCount": 1, "@songCount": 1,
-					})
-				}
+		}
+		rows.Close()
+	}
+
+	var starredAlbums []map[string]any
+	seenAlbums := map[string]bool{}
+	for i := range songs {
+		album := strings.TrimSpace(songs[i].Album)
+		if album == "" {
+			album = "未知专辑"
+		}
+		artist := strings.TrimSpace(songs[i].Artist)
+		if artist == "" {
+			artist = "未知歌手"
+		}
+		aMD5 := fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist)))
+		if favAlbumsMap[aMD5] && !seenAlbums[aMD5] {
+			seenAlbums[aMD5] = true
+			starredAlbums = append(starredAlbums, albumToMap(album, artist, 1, songs[i].Dur))
+		}
+	}
+
+	// 3. 获取独立收藏的歌手
+	favArtistsMap := map[string]bool{}
+	if rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'artist'", user); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				favArtistsMap[id] = true
+			}
+		}
+		rows.Close()
+	}
+
+	var starredArtists []map[string]any
+	seenArtists := map[string]bool{}
+	for i := range songs {
+		for _, name := range splitArtists(songs[i].Artist) {
+			arMD5 := fmt.Sprintf("%x", md5.Sum([]byte(name)))
+			if favArtistsMap[arMD5] && !seenArtists[arMD5] {
+				seenArtists[arMD5] = true
+				starredArtists = append(starredArtists, map[string]any{
+					"@id": artistID(name), "@name": name, "@albumCount": 1, "@songCount": 1,
+				})
 			}
 		}
 	}
-	
+
 	key := "starred"
 	if isStarred2 {
 		key = "starred2"
 	}
-	
+
 	h.writeOK(w, r, map[string]any{key: map[string]any{
 		"artist": starredArtists, "album": starredAlbums, "song": starredSongs,
 	}})
@@ -644,7 +706,7 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	for _, a := range albums {
 		albumList = append(albumList, albumToMap(a.name, a.artist, a.count, a.dur))
 	}
-	
+
 	h.writeOK(w, r, map[string]any{
 		"artist": map[string]any{
 			"@id":         id,
@@ -1017,7 +1079,7 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 	genre := r.URL.Query().Get("genre")
 	artist := r.URL.Query().Get("artist")
 	album := r.URL.Query().Get("album")
-	
+
 	songs := h.visibleSongs(user)
 	var filtered []db.Song
 	for _, s := range songs {
@@ -1041,7 +1103,7 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 		}
 		filtered = append(filtered, s)
 	}
-	
+
 	var out []map[string]any
 	for i := range filtered {
 		out = append(out, songToMap(&filtered[i]))
@@ -1176,7 +1238,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		h.writeErr(w, r, 0, err.Error())
 		return
 	}
-	
+
 	if u, err := url.Parse(rawURL); err == nil {
 		rawURL = u.String()
 		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
@@ -1313,13 +1375,21 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		for _, s := range songs {
 			if s.ID == id {
 				if s.CoverPath != "" {
-					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+					if size > 0 {
+						h.serveThumb(w, r, s.CoverPath, size)
+					} else {
+						serveLocalCover(w, r, s.CoverPath)
+					}
 					return
 				}
 				// 找同专辑
 				for _, s2 := range songs {
 					if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
-						if size > 0 { h.serveThumb(w, r, s2.CoverPath, size) } else { serveLocalCover(w, r, s2.CoverPath) }
+						if size > 0 {
+							h.serveThumb(w, r, s2.CoverPath, size)
+						} else {
+							serveLocalCover(w, r, s2.CoverPath)
+						}
 						return
 					}
 				}
@@ -1331,13 +1401,21 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	if typ == "album" {
 		for _, s := range songs {
 			album := strings.TrimSpace(s.Album)
-			if album == "" { album = "未知专辑" }
+			if album == "" {
+				album = "未知专辑"
+			}
 			artist := strings.TrimSpace(s.Artist)
-			if artist == "" { artist = "未知歌手" }
+			if artist == "" {
+				artist = "未知歌手"
+			}
 
 			if albumID(album, artist) == "al-"+id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id {
 				if s.CoverPath != "" {
-					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+					if size > 0 {
+						h.serveThumb(w, r, s.CoverPath, size)
+					} else {
+						serveLocalCover(w, r, s.CoverPath)
+					}
 					return
 				}
 			}
@@ -1354,12 +1432,16 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	for _, s := range songs {
 		if s.ID == rawID || albumID(s.Album, s.Artist) == rawID || fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == rawID {
 			if s.CoverPath != "" {
-				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+				if size > 0 {
+					h.serveThumb(w, r, s.CoverPath, size)
+				} else {
+					serveLocalCover(w, r, s.CoverPath)
+				}
 				return
 			}
 		}
 	}
-	
+
 	log.Printf("[getCoverArt] 所有尝试失败，返回默认图")
 	serveDefaultCover(w)
 }
@@ -1412,10 +1494,14 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 	// 2. 匹配专辑
 	for _, s := range songs {
 		album := strings.TrimSpace(s.Album)
-		if album == "" { album = "未知专辑" }
+		if album == "" {
+			album = "未知专辑"
+		}
 		artist := strings.TrimSpace(s.Artist)
-		if artist == "" { artist = "未知歌手" }
-		
+		if artist == "" {
+			artist = "未知歌手"
+		}
+
 		// Subsonic (al-xxxx)
 		if albumID(album, artist) == id && s.CoverPath != "" {
 			return s.CoverPath
@@ -1537,7 +1623,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		if role != "admin" && p.Owner != user && !p.Public {
 			continue
 		}
-		
+
 		coverArt := p.ID
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
 		if len(songs) > 0 && songs[0].CoverPath != "" {
@@ -1578,7 +1664,7 @@ func (h *Handler) getPlaylist(w http.ResponseWriter, r *http.Request, user strin
 		entries = append(entries, songToMap(&songs[i]))
 		totalDur += songs[i].Dur
 	}
-	
+
 	coverArt := p.ID
 	if len(songs) > 0 && songs[0].CoverPath != "" {
 		coverArt = songs[0].ID
@@ -1819,7 +1905,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 			break
 		}
 	}
-	
+
 	var jsonLines []map[string]any
 	for _, ln := range lines {
 		m := map[string]any{"@value": ln.Value}
@@ -1828,7 +1914,7 @@ func (h *Handler) getLyricsBySongId(w http.ResponseWriter, r *http.Request, user
 		}
 		jsonLines = append(jsonLines, m)
 	}
-	
+
 	h.writeOK(w, r, map[string]any{
 		"lyricsList": map[string]any{
 			"structuredLyrics": []map[string]any{{
@@ -1863,7 +1949,7 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 
 	// 解析歌手名称
 	name := h.resolveArtistName(id, user)
-	
+
 	bio := ""
 	hasPic := false
 	var similarArtists []map[string]any
@@ -1930,12 +2016,12 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 			size = n
 		}
 	}
-	
+
 	// 处理后缀
 	if strings.HasPrefix(id, "ar-") {
 		id = strings.TrimPrefix(id, "ar-")
 	}
-	
+
 	h.serveArtistCover(w, r, user, id, size)
 }
 
@@ -1959,14 +2045,14 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	}
 	ql := strings.ToLower(q)
 	all := ql == "" || ql == "*" || ql == "'" || ql == "''" || ql == "\"" || ql == "\"\"" || ql == "%27" || ql == "%27%27"
-	
+
 	songCount, _ := strconv.Atoi(r.URL.Query().Get("songCount"))
 	songOffset, _ := strconv.Atoi(r.URL.Query().Get("songOffset"))
 	artistCount, _ := strconv.Atoi(r.URL.Query().Get("artistCount"))
 	albumCount, _ := strconv.Atoi(r.URL.Query().Get("albumCount"))
-	
+
 	songs := h.visibleSongs(user)
-	
+
 	artistSongCount := map[string]int{}
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
@@ -1979,7 +2065,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 	albumSet := map[string]bool{}
 	var matchedArtists []map[string]any
 	var matchedAlbums []map[string]any
-	
+
 	for i := range songs {
 		s := &songs[i]
 		if !all {
@@ -1993,8 +2079,8 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request, user string, ke
 			if !artistSet[name] {
 				artistSet[name] = true
 				matchedArtists = append(matchedArtists, map[string]any{
-					"@id":         artistID(name), 
-					"@name":       name, 
+					"@id":         artistID(name),
+					"@name":       name,
 					"@albumCount": 1,
 					"@songCount":  artistSongCount[name],
 				})
