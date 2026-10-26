@@ -195,7 +195,7 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 			Ids       []string `json:"ids"`
 			AlbumIds  []string `json:"albumIds"`
 			ArtistIds []string `json:"artistIds"`
-			Id        string   `json:"id"` // 兼容单个 ID 传递
+			Id        string   `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 			ids = req.Ids
@@ -232,7 +232,6 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		ids = nil
 	}
 
-	// 处理明确的专辑 ID
 	for _, aid := range albumIds {
 		cleanID := strings.TrimPrefix(aid, "al-")
 		if isStar {
@@ -242,7 +241,6 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	// 处理明确的歌手 ID
 	for _, arid := range artistIds {
 		cleanID := strings.TrimPrefix(arid, "ar-")
 		if isStar {
@@ -252,13 +250,11 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	// 处理模糊的 ID (优先当歌曲，找不到当歌手/专辑)
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		res, _ := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
-			// 【核心修复】查不到歌曲，说明前端给的是无前缀的歌手或专辑 ID，统统存进独立表！
 			cleanArID := strings.TrimPrefix(id, "ar-")
 			cleanAlID := strings.TrimPrefix(id, "al-")
 			if isStar {
@@ -348,18 +344,13 @@ func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string)
 	return
 }
 
+func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 【核心修复】歌曲的 date 必须是纯年份字符串
-func safeSongDate(year int) string {
-	if year <= 0 { return "1970" }
-	return strconv.Itoa(year)
-}
-
-func safeAlbumDate(year int) string {
-	if year <= 0 { return "1970-01-01T00:00:00Z" }
-	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
+func safeDate(year int) string {
+	if year <= 0 { return "" } 
+	return fmt.Sprintf("%04d", year) // 只给年份，防止 int.parse 崩溃
 }
 
 // ==================== 歌手与专辑 ====================
@@ -394,10 +385,10 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		var starredAt any = nil
+		var starredAt any = "1970-01-01T00:00:00Z" // 兜底，不传 nil
 		if isFav { starredAt = nowStr }
 		out = append(out, map[string]any{
-			"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
 			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
 			"mbzArtistId": "", "smallImageUrl": nil, "mediumImageUrl": nil, "largeImageUrl": nil,
@@ -437,11 +428,11 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 
 	favArtists := h.getFavoriteArtists(user)
 	isFav := favArtists[searchID]
-	var starredAt any = nil
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 
 	json.NewEncoder(w).Encode(map[string]any{
-		"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 		"id": id, "name": artistName, "coverArt": searchID,
 		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
@@ -494,21 +485,21 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		isFav := favAlbums[id]
-		var starredAt any = nil
+		var starredAt any = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
 
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath, "coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
-			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeAlbumDate(minYear),
+			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
 			"maxOriginalYear": 0, "minOriginalYear": 0, 
 			"releases": 1, 
 			"compilation": false,
 			"songCount": agg.count, 
-			"duration": float64(agg.dur) + 0.001, // 【致命修复】强制带小数
+			"duration": float64(agg.dur) + 0.001, 
 			"size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
 			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr, "mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
@@ -536,11 +527,11 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 				outAlbum = map[string]any{
 					"id": id, "name": album, "embedArtPath": s.CoverPath, "coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
-					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeAlbumDate(s.Year),
+					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
+					"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z",
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 					"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 				}
@@ -554,23 +545,23 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
-			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeAlbumDate(0),
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeDate(0),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
-			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
+			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
+			"rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z", "externalInfoUpdatedAt": nil,
 			"createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		}
 	}
 	favAlbums := h.getFavoriteAlbums(user)
 	isFav := favAlbums[searchID]
-	var starredAt any = nil
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = float64(totalDur) + 0.001 // 【致命修复】强制带小数
+	outAlbum["duration"] = float64(totalDur) + 0.001
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -635,23 +626,29 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
-	var starredAt any = nil
+	
+	// 绝对不传 null，防止前端 DateTime.parse 崩溃
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
-		"playCount": 0, "playDate": nil, "rating": 0, "starred": isStarred, "starredAt": starredAt,
+		"playCount": 0, 
+		"playDate": "1970-01-01T00:00:00Z", // 绝对不传 null
+		"rating": 0, 
+		"starred": isStarred, 
+		"starredAt": starredAt,
 		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
 		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
 		"coverArt": s.ID, "hasCoverArt": true, 
-		"trackNumber": s.TrackNumber, "discNumber": s.DiscNumber,
+		"trackNumber": maxNum(1, s.TrackNumber), "discNumber": maxNum(1, s.DiscNumber),
 		"year": s.Year, 
-		"date": safeSongDate(s.Year), 
+		"date": safeDate(s.Year), 
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix, 
-		"duration": float64(dur) + 0.001, // 【致命修复】强制带小数
+		"duration": float64(dur) + 0.001, 
 		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre, "genres": []string{},
 		"fullText": " " + title + " " + album + " " + artist, "orderTitle": title, "orderAlbumName": album, 
 		"orderArtistName": artist, "orderAlbumArtistName": albumArtist, "compilation": false, 
-		"lyrics": "", // 【致命修复】绝对不能给 "[]"，给空字符串，防止列表页越界崩溃！
+		"lyrics": "[{\"lang\":\"xxx\",\"line\":[{\"start\":0,\"value\":\" \"}],\"synced\":false}]", // 【致命修复】给一个包含实际元素的安全 JSON，防止 lyric.line[0] 越界崩溃
 		"rgAlbumGain": -6.4, "rgAlbumPeak": 0.810242, "rgTrackGain": -6.4, "rgTrackPeak": 0.810242,
 		"createdAt": nowStr, "updatedAt": nowStr,
 	}
