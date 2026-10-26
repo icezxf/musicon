@@ -1328,7 +1328,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	}
 
 	// 3. 如果是专辑类型，匹配专辑 ID
-	var targetAlbum, targetArtist string
 	if typ == "album" {
 		for _, s := range songs {
 			album := strings.TrimSpace(s.Album)
@@ -1341,9 +1340,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
 					return
 				}
-				// 记住名字，如果本地没图，等会儿去网上搜
-				targetAlbum = album
-				targetArtist = artist
 			}
 		}
 	}
@@ -1354,30 +1350,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 
-	// 5. 兜底逻辑：本地没图，去网易云搜专辑图
-	if targetAlbum != "" && h.NCM != nil {
-		log.Printf("[getCoverArt] 本地无图，尝试从网易云搜索专辑图: %s - %s", targetArtist, targetAlbum)
-		searchURL := fmt.Sprintf("http://127.0.0.1:3000/cloudsearch?keywords=%s %s&type=10&limit=1", url.QueryEscape(targetArtist), url.QueryEscape(targetAlbum))
-		resp, err := http.Get(searchURL)
-		if err == nil {
-			defer resp.Body.Close()
-			var res struct {
-				Result struct {
-					Albums []struct {
-						PicUrl string `json:"picUrl"`
-					} `json:"albums"`
-				} `json:"result"`
-			}
-			if json.NewDecoder(resp.Body).Decode(&res) == nil && len(res.Result.Albums) > 0 && res.Result.Albums[0].PicUrl != "" {
-				log.Printf("[getCoverArt] 网易云搜到专辑图: %s", res.Result.Albums[0].PicUrl)
-				if proxyImage(w, res.Result.Albums[0].PicUrl) {
-					return
-				}
-			}
-		}
-	}
-
-	// 6. 兼容旧逻辑
+	// 5. 兼容旧逻辑
 	for _, s := range songs {
 		if s.ID == rawID || albumID(s.Album, s.Artist) == rawID || fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == rawID {
 			if s.CoverPath != "" {
@@ -1888,13 +1861,40 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	base := scheme + "://" + host
 	imgURL := base + "/rest/getArtistImage?id=" + id
 
+	// 解析歌手名称
+	name := h.resolveArtistName(id, user)
+	
+	bio := ""
+	hasPic := false
+	var similarArtists []map[string]any
+
+	// 去 NCM 查简介和头像
+	if h.NCM != nil && name != "" && name != id {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil {
+			bio = d.Bio
+			hasPic = d.Pic != ""
+		}
+	}
+
+	// 如果没有去 NCM 查到，也去洛雪试一下
+	if bio == "" && !hasPic && h.LX != nil && name != "" && name != id {
+		if d, err := h.LX.GetSingerDetail(name); err == nil {
+			bio = d.Bio
+			hasPic = d.Pic != ""
+		}
+	}
+
+	if hasPic {
+		imgURL = base + "/rest/getArtistImage?id=" + id
+	}
+
 	h.writeOK(w, r, map[string]any{
 		key: map[string]any{
-			"biography":      "",
+			"biography":      bio,
 			"smallImageUrl":  imgURL,
 			"mediumImageUrl": imgURL,
 			"largeImageUrl":  imgURL,
-			"similarArtist":  []any{},
+			"similarArtist":  similarArtists,
 		},
 	})
 }
