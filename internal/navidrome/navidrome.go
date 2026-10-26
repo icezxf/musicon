@@ -30,12 +30,10 @@ type Handler struct {
 func New(database *db.Holder, am *alist.Manager, c *config.Config) *Handler {
 	h := &Handler{DB: database, AList: am, Cfg: c}
 	h.DB.DB.Exec("ALTER TABLE songs ADD COLUMN starred INTEGER DEFAULT 0")
-	
-	// 建立独立的收藏表（用于分离歌曲、专辑、歌手的收藏）
 	h.DB.DB.Exec(`
 		CREATE TABLE IF NOT EXISTS user_favorites (
 			username TEXT NOT NULL,
-			kind TEXT NOT NULL,      -- 'artist' 或 'album'
+			kind TEXT NOT NULL,
 			item_id TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (username, kind, item_id)
@@ -51,7 +49,6 @@ var (
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/login", h.login)
 	mux.HandleFunc("/api/keepalive/keepalive", h.keepalive)
-	
 	mux.HandleFunc("/api/artist", h.route)
 	mux.HandleFunc("/api/artist/", h.route)
 	mux.HandleFunc("/api/album", h.route)
@@ -64,7 +61,6 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/api/unstar", h.route)
 	mux.HandleFunc("/api/cover", h.route)
 	mux.HandleFunc("/api/cover/", h.route)
-	
 	mux.HandleFunc("/api/stream", h.route)
 	mux.HandleFunc("/api/stream/", h.route)
 }
@@ -81,38 +77,26 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	var req LoginReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
-
 	if !auth.VerifySubsonic(h.DB.DB, req.Username, req.Password, "", "") {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid credentials"})
 		return
 	}
-
 	hToken := md5.Sum([]byte(req.Username + req.Password))
 	token := hex.EncodeToString(hToken[:])
 	clientID := "musicon-" + token[:8]
 	sessionTokens.Store(token, req.Username)
-
 	subsonicSalt := fmt.Sprintf("%d", time.Now().UnixNano())
 	stMd5 := md5.Sum([]byte(req.Password + subsonicSalt))
-	subsonicToken := hex.EncodeToString(stMd5[:])
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":            clientID,
-		"isAdmin":       true,
-		"name":          req.Username,
-		"token":         token,
-		"username":      req.Username,
-		"subsonicSalt":  subsonicSalt,
-		"subsonicToken": subsonicToken,
-		"lastFMApiKey":  "",
+		"id": clientID, "isAdmin": true, "name": req.Username, "token": token, "username": req.Username,
+		"subsonicSalt": subsonicSalt, "subsonicToken": hex.EncodeToString(stMd5[:]), "lastFMApiKey": "",
 	})
 }
 
@@ -145,6 +129,15 @@ func (h *Handler) checkAuth(r *http.Request) (string, bool) {
 // ==================== 路由分发 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
+	// 防止路由层 panic 导致整个服务崩溃
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("[navidrome] PANIC recovered: %v", err)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("[]"))
+		}
+	}()
+
 	username, ok := h.checkAuth(r)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -154,19 +147,16 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 	p := strings.TrimPrefix(r.URL.Path, "/api/")
 	p = strings.TrimSuffix(p, "/")
-	log.Printf("[navidrome] %s %s user=%s", r.Method, p, username)
 
 	if p == "stream" || strings.HasPrefix(p, "stream/") {
 		h.handleStream(w, r)
 		return
 	}
-
 	if strings.HasPrefix(p, "cover/") {
 		id := strings.TrimPrefix(p, "cover/")
 		http.Redirect(w, r, "/rest/getCoverArt?id="+id, http.StatusFound)
 		return
 	}
-
 	if p == "star" || p == "unstar" {
 		h.handleStar(w, r, username)
 		return
@@ -197,7 +187,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 收藏处理（独立隔离） ====================
+// ==================== 收藏处理 ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids, albumIds, artistIds []string
@@ -222,13 +212,13 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 	val := 0
 	if isStar { val = 1 }
 
-	// 歌曲
+	// 1. 独立处理歌曲
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
 	}
 
-	// 专辑
+	// 2. 独立处理专辑
 	for _, aid := range albumIds {
 		cleanID := strings.TrimPrefix(aid, "al-")
 		if isStar {
@@ -238,7 +228,7 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	// 歌手
+	// 3. 独立处理歌手
 	for _, arid := range artistIds {
 		cleanID := strings.TrimPrefix(arid, "ar-")
 		if isStar {
@@ -254,12 +244,8 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 
 func (h *Handler) getStarredMap() map[string]bool {
 	m := map[string]bool{}
-	rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1")
-	if err == nil {
-		for rows.Next() {
-			var id string
-			if rows.Scan(&id) == nil { m[id] = true }
-		}
+	if rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1"); err == nil {
+		for rows.Next() { var id string; if rows.Scan(&id) == nil { m[id] = true } }
 		rows.Close()
 	}
 	return m
@@ -267,12 +253,8 @@ func (h *Handler) getStarredMap() map[string]bool {
 
 func (h *Handler) getFavoriteAlbums(user string) map[string]bool {
 	m := map[string]bool{}
-	rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'album'", user)
-	if err == nil {
-		for rows.Next() {
-			var id string
-			if rows.Scan(&id) == nil { m[id] = true }
-		}
+	if rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'album'", user); err == nil {
+		for rows.Next() { var id string; if rows.Scan(&id) == nil { m[id] = true } }
 		rows.Close()
 	}
 	return m
@@ -280,68 +262,38 @@ func (h *Handler) getFavoriteAlbums(user string) map[string]bool {
 
 func (h *Handler) getFavoriteArtists(user string) map[string]bool {
 	m := map[string]bool{}
-	rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'artist'", user)
-	if err == nil {
-		for rows.Next() {
-			var id string
-			if rows.Scan(&id) == nil { m[id] = true }
-		}
+	if rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'artist'", user); err == nil {
+		for rows.Next() { var id string; if rows.Scan(&id) == nil { m[id] = true } }
 		rows.Close()
 	}
 	return m
 }
 
-// ==================== 核心：音频流 302 ====================
+// ==================== 音频流 ====================
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
 	songID := r.URL.Query().Get("id")
-	if songID == "" {
-		songID = strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/api/stream/")
-	}
-	if songID == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
-		return
-	}
-
+	if songID == "" { songID = strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/api/stream/") }
+	if songID == "" { http.Error(w, "missing id", http.StatusBadRequest); return }
 	song, err := h.DB.GetSong(songID)
-	if err != nil {
-		http.Error(w, "song not found", http.StatusNotFound)
-		return
-	}
-
-	if strings.HasPrefix(song.ID, "lxv-") || song.Fmt == "VIRTUAL" {
-		http.Error(w, "virtual songs not supported in native API", http.StatusNotImplemented)
-		return
-	}
-
+	if err != nil { http.Error(w, "song not found", http.StatusNotFound); return }
+	if strings.HasPrefix(song.ID, "lxv-") || song.Fmt == "VIRTUAL" { http.Error(w, "virtual songs not supported", http.StatusNotImplemented); return }
 	providerID := song.ProviderID
-	if providerID == "" {
-		providerID = "alist-1"
-	}
-
+	if providerID == "" { providerID = "alist-1" }
 	rawURL, err := h.AList.Get(providerID).GetRawURL(song.Path)
-	if err != nil {
-		log.Printf("[navidrome] alist stream error: %v", err)
-		http.Error(w, "stream error", http.StatusInternalServerError)
-		return
-	}
-
+	if err != nil { http.Error(w, "stream error", http.StatusInternalServerError); return }
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
-// ==================== 基础字段清洗 ====================
+// ==================== 基础清洗 ====================
 
 func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string) {
-	album = strings.TrimSpace(s.Album)
-	if album == "" { album = "未知专辑" }
-	artist = strings.TrimSpace(s.Artist)
-	if artist == "" { artist = "未知歌手" }
-	albumArtist = strings.TrimSpace(s.AlbumArtist)
-	if albumArtist == "" { albumArtist = artist }
-	title = strings.TrimSpace(s.Title)
-	if title == "" { title = "未知歌曲" }
+	album = strings.TrimSpace(s.Album); if album == "" { album = "未知专辑" }
+	artist = strings.TrimSpace(s.Artist); if artist == "" { artist = "未知歌手" }
+	albumArtist = strings.TrimSpace(s.AlbumArtist); if albumArtist == "" { albumArtist = artist }
+	title = strings.TrimSpace(s.Title); if title == "" { title = "未知歌曲" }
 	suffix = strings.ToLower(s.Fmt)
 	if suffix == "" {
 		ext := path.Ext(s.Path)
@@ -350,30 +302,15 @@ func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string)
 	return
 }
 
-func maxNum(a, b int) int {
-	if a > b { return a }
-	return b
-}
-
-func isStarred(r *http.Request) bool {
-	v := r.URL.Query().Get("starred")
-	return v == "true" || v == "1"
-}
-
-func primaryArtist(artist string) string {
-	parts := splitArtists(artist)
-	if len(parts) > 0 { return parts[0] }
-	return artist
-}
-
-func safeYear(year int) string {
-	if year <= 0 { return "" }
-	return strconv.Itoa(year)
-}
+func maxNum(a, b int) int { if a > b { return a }; return b }
+func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
+func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
+func safeYear(year int) string { if year <= 0 { return "" }; return strconv.Itoa(year) }
 
 // ==================== 歌手与专辑 ====================
 
 func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
 	starFilter := isStarred(r)
@@ -389,14 +326,10 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			if nameFilter != "" && !strings.Contains(strings.ToLower(name), nameFilter) { continue }
 			id := genID(name)
 			if starFilter && !favArtists[id] { continue }
-
-			if _, ok := artistMap[name]; !ok {
-				artistMap[name] = &artistAgg{name: name}
-				artistAlbums[name] = map[string]bool{}
-			}
+			if _, ok := artistMap[name]; !ok { artistMap[name] = &artistAgg{name: name}; artistAlbums[name] = map[string]bool{} }
 			artistMap[name].songCount++
 			artistMap[name].size += s.FileSize
-			album, _, _, _, _ := cleanSongMeta(s) // 【已修复】这里之前的 cleanMovie 拼写错误
+			album, _, _, _, _ := cleanSongMeta(s)
 			artistAlbums[name][album] = true
 		}
 	}
@@ -408,30 +341,14 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		isFav := favArtists[id]
 		var starredAt any = nil
 		if isFav { starredAt = nowStr }
-
 		out = append(out, map[string]any{
-			"playCount":             0,
-			"playDate":              nil,
-			"rating":                0,
-			"starred":               isFav,
-			"starredAt":             starredAt,
-			"id":                    id,
-			"name":                  name,
-			"albumCount":            len(artistAlbums[name]),
-			"songCount":             agg.songCount,
-			"genres":                nil,
-			"fullText":              " " + name,
-			"orderArtistName":       name,
-			"size":                  agg.size,
-			"mbzArtistId":           "",
-			"smallImageUrl":         "",
-			"mediumImageUrl":        "",
-			"largeImageUrl":         "",
-			"externalUrl":           "https://www.last.fm/music/" + name,
-			"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
+			"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
+			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
+			"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
+			"externalUrl": "https://www.last.fm/music/" + name, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 		})
 	}
-	
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
 	total := len(out)
 	out = paginate(out, r)
@@ -440,6 +357,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 }
 
 func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	var artistName string
 	albumSet := map[string]bool{}
@@ -458,7 +376,6 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 			}
 		}
 	}
-
 	if artistName == "" { artistName = "未知歌手" }
 
 	favArtists := h.getFavoriteArtists(user)
@@ -467,29 +384,16 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 
 	json.NewEncoder(w).Encode(map[string]any{
-		"playCount":             0,
-		"playDate":              nil,
-		"rating":                0,
-		"starred":               isFav,
-		"starredAt":             starredAt,
-		"id":                    id,
-		"name":                  artistName,
-		"albumCount":            len(albumSet),
-		"songCount":             songCount,
-		"genres":                nil,
-		"fullText":              " " + artistName,
-		"orderArtistName":       artistName,
-		"size":                  totalSize,
-		"mbzArtistId":           "",
-		"smallImageUrl":         "",
-		"mediumImageUrl":        "",
-		"largeImageUrl":         "",
-		"externalUrl":           "https://www.last.fm/music/" + artistName,
-		"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
+		"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+		"id": id, "name": artistName, "albumCount": len(albumSet), "songCount": songCount,
+		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
+		"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
+		"externalUrl": "https://www.last.fm/music/" + artistName, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
 
 func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	artistIDFilter := r.URL.Query().Get("artist_id")
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
@@ -504,23 +408,16 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 
 	for _, s := range songs {
 		album, artist, _, _, _ := cleanSongMeta(s)
-		
 		if artistIDFilter != "" {
 			matched := false
-			for _, n := range splitArtists(artist) {
-				if genID(n) == artistIDFilter { matched = true; break }
-			}
+			for _, n := range splitArtists(artist) { if genID(n) == artistIDFilter { matched = true; break } }
 			if !matched { continue }
 		}
 		if nameFilter != "" && !strings.Contains(strings.ToLower(album), nameFilter) { continue }
-
 		k := album + "|" + artist
 		id := genID(k)
 		if starFilter && !favAlbums[id] { continue }
-
-		if _, ok := albumMap[k]; !ok {
-			albumMap[k] = &albumAgg{name: album, artist: artist, minYear: 9999, coverPath: s.CoverPath, paths: s.Path}
-		}
+		if _, ok := albumMap[k]; !ok { albumMap[k] = &albumAgg{name: album, artist: artist, minYear: 9999, coverPath: s.CoverPath, paths: s.Path} }
 		agg := albumMap[k]
 		agg.count++
 		agg.dur += s.Dur
@@ -538,29 +435,20 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		arID := genID(primaryArtist(agg.artist))
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
-		
 		isFav := favAlbums[id]
 		var starredAt any = nil
 		if isFav { starredAt = nowStr }
 
 		out = append(out, map[string]any{
-			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
-			"coverArt": id,
+			"id": id, "name": agg.name, "embedArtPath": agg.coverPath, "coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
-			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, 
-			"date": safeYear(minYear),
-			"maxOriginalYear": 0, "minOriginalYear": 0, 
-			"releases": 1, 
-			"compilation": false,
-			"songCount": agg.count, 
-			"duration": float64(agg.dur), 
-			"size": agg.size, "genre": "", 
-			"genres": nil, 
+			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeYear(minYear),
+			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
+			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, 
-			"playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt, 
-			"externalInfoUpdatedAt": nil, "createdAt": nowStr, "updatedAt": nowStr,
-			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
+			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
+			"createdAt": nowStr, "updatedAt": nowStr, "mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
@@ -571,6 +459,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 }
 
 func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	var outAlbum map[string]any
 	var songCount, totalDur int
@@ -582,15 +471,11 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 			if outAlbum == nil {
 				arID := genID(primaryArtist(artist))
 				outAlbum = map[string]any{
-					"id": id, "name": album, "embedArtPath": s.CoverPath,
-					"coverArt": id,
+					"id": id, "name": album, "embedArtPath": s.CoverPath, "coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
 					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeYear(s.Year),
-					"maxOriginalYear": 0, "minOriginalYear": 0, 
-					"releases": 1, 
-					"compilation": false,
-					"genre": s.Genre, "genres": nil, 
-					"fullText": " " + album + " " + artist,
+					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
+					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
@@ -602,30 +487,27 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 			totalSize += s.FileSize
 		}
 	}
-	
 	if outAlbum == nil {
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
 			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": "",
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-			"genre": "", "genres": nil, "fullText": " ", "orderAlbumName": "未知专辑",
-			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil, 
-			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil, 
+			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
+			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
+			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
 			"createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		}
 	}
-	
 	favAlbums := h.getFavoriteAlbums(user)
 	isFav := favAlbums[id]
 	var starredAt any = nil
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
-	
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = float64(totalDur) 
+	outAlbum["duration"] = float64(totalDur)
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -633,9 +515,10 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 // ==================== 歌曲 ====================
 
 func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	albumIDFilter := r.URL.Query().Get("album_id")
-	artistIDFilter := r.URL.Query().Get("artist_id") 
+	artistIDFilter := r.URL.Query().Get("artist_id")
 	titleFilter := strings.ToLower(r.URL.Query().Get("title"))
 	starFilter := isStarred(r)
 	starredMap := h.getStarredMap()
@@ -644,17 +527,12 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 	for _, s := range songs {
 		if starFilter && !starredMap[s.ID] { continue }
 		album, artist, _, title, _ := cleanSongMeta(s)
-		
 		if albumIDFilter != "" && genID(album+"|"+artist) != albumIDFilter { continue }
-		
 		if artistIDFilter != "" {
 			matched := false
-			for _, n := range splitArtists(artist) {
-				if genID(n) == artistIDFilter { matched = true; break }
-			}
+			for _, n := range splitArtists(artist) { if genID(n) == artistIDFilter { matched = true; break } }
 			if !matched { continue }
 		}
-		
 		if titleFilter != "" && !strings.Contains(strings.ToLower(title), titleFilter) { continue }
 		filtered = append(filtered, s)
 	}
@@ -667,7 +545,6 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 		arID := genID(primaryArtist(artist))
 		out = append(out, h.songObj(s, aID, arID, starredMap[s.ID], nowStr))
 	}
-
 	total := len(out)
 	out = paginate(out, r)
 	w.Header().Set("x-total-count", strconv.Itoa(total))
@@ -675,17 +552,14 @@ func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) 
 }
 
 func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user string) {
+	defer func() { recover() }()
 	songs := h.visibleSongs(user)
 	var found *db.Song
-	for _, s := range songs {
-		if s.ID == id { found = &s; break }
-	}
-	
+	for _, s := range songs { if s.ID == id { found = &s; break } }
 	if found == nil {
 		json.NewEncoder(w).Encode(h.songObj(db.Song{ID: id, Title: "未知歌曲"}, "", "", false, time.Now().Format(time.RFC3339)))
 		return
 	}
-	
 	album, artist, _, _, _ := cleanSongMeta(*found)
 	aID := genID(album + "|" + artist)
 	arID := genID(primaryArtist(artist))
@@ -697,192 +571,81 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
-
 	var starredAt any = nil
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
-		"playCount":           0,
-		"playDate":            nil, 
-		"rating":              0,
-		"starred":             isStarred,
-		"starredAt":           starredAt,
-		"bookmarkPosition":    0,
-		"id":                  s.ID,
-		"isDir":               false,
-		"type":                "music",
-		"mediaType":           "song",
-		"path":                s.Path,
-		"title":               title,
-		"album":               album,
-		"artistId":            arID,
-		"artist":              artist,
-		"albumArtistId":       genID(primaryArtist(albumArtist)),
-		"albumArtist":         albumArtist,
-		"albumId":             aID,
-		"coverArt":            s.ID,
-		"hasCoverArt":         true,
-		"trackNumber":         maxNum(1, s.TrackNumber),
-		"discNumber":          maxNum(1, s.DiscNumber),
-		"year":                s.Year,
-		"date":                safeYear(s.Year), 
-		"originalYear":        0,
-		"releaseYear":         0,
-		"size":                s.FileSize,
-		"suffix":              suffix,
-		"duration":            float64(dur), 
-		"bitRate":             s.Bitrate,
-		"channels":            s.Channels,
-		"genre":               s.Genre,
-		"genres":              nil, 
-		"fullText":            " " + title + " " + album + " " + artist,
-		"orderTitle":          title,
-		"orderAlbumName":      album,
-		"orderArtistName":     artist,
-		"orderAlbumArtistName": albumArtist,
-		"compilation":         false,
-		"lyrics":              "[]", 
-		"rgAlbumGain":         0.0,
-		"rgAlbumPeak":         0.0,
-		"rgTrackGain":         0.0,
-		"rgTrackPeak":         0.0,
-		"createdAt":           nowStr,
-		"updatedAt":           nowStr,
-		"bpm":                 0,
-		"comment":             "",
-		"moods":               []string{},
-		"sortName":            title,
-		"discSubtitle":        "",
-		"mbzTrackId":          "",
-		"mbzAlbumId":          "",
-		"mbzArtistId":         "",
+		"playCount": 0, "playDate": nil, "rating": 0, "starred": isStarred, "starredAt": starredAt,
+		"bookmarkPosition": 0, "id": s.ID, "isDir": false, "type": "music", "mediaType": "song",
+		"path": s.Path, "title": title, "album": album, "artistId": arID, "artist": artist,
+		"albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
+		"coverArt": s.ID, "hasCoverArt": true, "trackNumber": maxNum(1, s.TrackNumber), "discNumber": maxNum(1, s.DiscNumber),
+		"year": s.Year, "date": safeYear(s.Year), "originalYear": 0, "releaseYear": 0, "size": s.FileSize,
+		"suffix": suffix, "duration": float64(dur), "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
+		"genres": []string{}, "fullText": " " + title + " " + album + " " + artist, "orderTitle": title,
+		"orderAlbumName": album, "orderArtistName": artist, "orderAlbumArtistName": albumArtist,
+		"compilation": false, "lyrics": "[]", "rgAlbumGain": 0.0, "rgAlbumPeak": 0.0, "rgTrackGain": 0.0, "rgTrackPeak": 0.0,
+		"createdAt": nowStr, "updatedAt": nowStr, "bpm": 0, "comment": "", "moods": []string{},
+		"sortName": title, "discSubtitle": "", "mbzTrackId": "", "mbzAlbumId": "", "mbzArtistId": "",
 	}
 }
 
 // ==================== 歌单操作 ====================
 
 func (h *Handler) handlePlaylistRoot(w http.ResponseWriter, r *http.Request, user string) {
+	defer func() { recover() }()
 	switch r.Method {
-	case http.MethodGet:
-		h.getPlaylists(w, r, user)
+	case http.MethodGet: h.getPlaylists(w, r, user)
 	case http.MethodPost:
-		var req struct {
-			Name    string `json:"name"`
-			Comment string `json:"comment"`
-			Public  bool   `json:"public"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"error":"bad request"}`))
-			return
-		}
+		var req struct { Name, Comment string; Public bool }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil { w.WriteHeader(http.StatusBadRequest); w.Write([]byte(`{"error":"bad request"}`)); return }
 		id, err := h.DB.CreatePlaylist(req.Name, req.Comment, user, req.Public)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error":"`+err.Error()+`"}`))
-			return
-		}
+		if err != nil { w.WriteHeader(http.StatusInternalServerError); w.Write([]byte(`{"error":"`+err.Error()+`"}`)); return }
 		json.NewEncoder(w).Encode(map[string]any{"id": id})
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	default: w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
 func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p string, user string) {
+	defer func() { recover() }()
 	parts := strings.Split(p, "/")
+	if len(parts) < 2 { w.WriteHeader(http.StatusOK); w.Write([]byte("{}")); return } // 防止越界 panic
 	id := parts[1]
 	
 	if len(parts) == 2 {
 		switch r.Method {
-		case http.MethodGet:
-			h.getPlaylistDetail(w, r, id, user)
+		case http.MethodGet: h.getPlaylistDetail(w, r, id, user)
 		case http.MethodDelete:
 			p, err := h.DB.GetPlaylist(id)
-			if err != nil {
-				w.WriteHeader(http.StatusNotFound)
-				w.Write([]byte(`{"error":"not found"}`))
-				return
-			}
+			if err != nil { w.WriteHeader(http.StatusNotFound); w.Write([]byte(`{"error":"not found"}`)); return }
 			role := h.DB.GetUserRole(user)
-			if role != "admin" && p.Owner != user {
-				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(`{"error":"forbidden"}`))
-				return
-			}
-			h.DB.DeletePlaylist(id)
-			w.Write([]byte("{}"))
+			if role != "admin" && p.Owner != user { w.WriteHeader(http.StatusForbidden); w.Write([]byte(`{"error":"forbidden"}`)); return }
+			h.DB.DeletePlaylist(id); w.Write([]byte("{}"))
 		case http.MethodPut:
-			var req struct {
-				Name    string `json:"name"`
-				Comment string `json:"comment"`
-				Public  bool   `json:"public"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte(`{"error":"bad request"}`))
-				return
-			}
-			
+			var req struct { Name, Comment string; Public bool }
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil { w.WriteHeader(http.StatusBadRequest); w.Write([]byte(`{"error":"bad request"}`)); return }
 			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
 			h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id)
 			b := 0; if req.Public { b = 1 }
-			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id)
-			
-			w.Write([]byte("{}"))
+			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id); w.Write([]byte("{}"))
 		}
 	} else if len(parts) == 3 && parts[2] == "tracks" {
 		switch r.Method {
-		case http.MethodGet:
-			h.getPlaylistTracks(w, r, id, user)
+		case http.MethodGet: h.getPlaylistTracks(w, r, id, user)
 		case http.MethodPost:
 			var songIDs []string
-			var req struct {
-				Ids interface{} `json:"ids"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				log.Printf("[navidrome] playlist add tracks decode err: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				w.Write([]byte(`{"error":"bad request"}`))
-				return
-			}
-			
+			var req struct { Ids interface{} `json:"ids"` }
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil { w.WriteHeader(http.StatusBadRequest); w.Write([]byte(`{"error":"bad request"}`)); return }
 			if req.Ids != nil {
-				if arr, ok := req.Ids.([]interface{}); ok {
-					for _, item := range arr {
-						if s, ok := item.(string); ok {
-							songIDs = append(songIDs, s)
-						}
-					}
-				} else if str, ok := req.Ids.(string); ok {
-					songIDs = strings.Split(str, ",")
-				}
+				if arr, ok := req.Ids.([]interface{}); ok { for _, item := range arr { if s, ok := item.(string); ok { songIDs = append(songIDs, s) } } } else if str, ok := req.Ids.(string); ok { songIDs = strings.Split(str, ",") }
 			}
-			
-			if len(songIDs) > 0 {
-				log.Printf("[navidrome] adding %d songs to playlist %s", len(songIDs), id)
-				if err := h.DB.AddSongsToPlaylist(id, songIDs); err != nil {
-					log.Printf("[navidrome] AddSongsToPlaylist err: %v", err)
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte(`{"error":"add failed"}`))
-					return
-				}
-			}
+			if len(songIDs) > 0 { if err := h.DB.AddSongsToPlaylist(id, songIDs); err != nil { w.WriteHeader(http.StatusInternalServerError); w.Write([]byte(`{"error":"add failed"}`)); return } }
 			w.Write([]byte("{}"))
 		case http.MethodDelete:
 			songs, _ := h.DB.GetPlaylistSongs(id)
-			q := r.URL.Query()
-			rowIDs := q["id"]
 			var toRemove []string
-			for _, rowStr := range rowIDs {
-				if idx, err := strconv.Atoi(rowStr); err == nil && idx > 0 && idx <= len(songs) {
-					toRemove = append(toRemove, songs[idx-1].ID)
-				}
-			}
-			if len(toRemove) > 0 {
-				if err := h.DB.RemoveSongsFromPlaylist(id, toRemove); err != nil {
-					log.Printf("[navidrome] RemoveSongsFromPlaylist err: %v", err)
-				}
-			}
+			for _, rowStr := range r.URL.Query()["id"] { if idx, err := strconv.Atoi(rowStr); err == nil && idx > 0 && idx <= len(songs) { toRemove = append(toRemove, songs[idx-1].ID) } }
+			if len(toRemove) > 0 { h.DB.RemoveSongsFromPlaylist(id, toRemove) }
 			w.Write([]byte("{}"))
 		}
 	}
@@ -896,15 +659,12 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 	for _, p := range pls {
 		if role != "admin" && p.Owner != user && !p.Public { continue }
 		songs, _ := h.DB.GetPlaylistSongs(p.ID)
-		var size int64
-		var dur int
+		var size int64; var dur int
 		for _, s := range songs { size += s.FileSize; dur += s.Dur }
-
 		out = append(out, map[string]any{
-			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur),
-			"size": size, "songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
-			"public": p.Public, "path": "", "sync": false, "createdAt": nowStr, "updatedAt": nowStr,
-			"rules": []any{}, "evaluatedAt": nil,
+			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size, "songCount": len(songs),
+			"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
+			"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
 		})
 	}
 	total := len(out)
@@ -915,22 +675,15 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 
 func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	p, err := h.DB.GetPlaylist(id)
-	if err != nil {
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{})
-		return
-	}
+	if err != nil { w.WriteHeader(http.StatusOK); json.NewEncoder(w).Encode(map[string]any{}); return }
 	songs, _ := h.DB.GetPlaylistSongs(id)
-	var size int64
-	var dur int
+	var size int64; var dur int
 	for _, s := range songs { size += s.FileSize; dur += s.Dur }
-
 	nowStr := time.Now().Format(time.RFC3339)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size,
-		"songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
-		"public": p.Public, "path": "", "sync": false, "createdAt": nowStr, "updatedAt": nowStr,
-		"rules": []any{}, "evaluatedAt": nil,
+		"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size, "songCount": len(songs),
+		"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
+		"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
 	})
 }
 
@@ -939,17 +692,10 @@ func (h *Handler) getPlaylistTracks(w http.ResponseWriter, r *http.Request, id, 
 	nowStr := time.Now().Format(time.RFC3339)
 	out := make([]map[string]any, 0)
 	starredMap := h.getStarredMap()
-	
 	for idx, s := range songs {
 		album, artist, _, _, _ := cleanSongMeta(s)
-		aID := genID(album + "|" + artist)
-		arID := genID(primaryArtist(artist))
-		
-		sObj := h.songObj(s, aID, arID, starredMap[s.ID], nowStr)
-		sObj["id"] = s.ID
-		sObj["mediaFileId"] = s.ID
-		sObj["playlistEntryId"] = strconv.Itoa(idx + 1)
-		sObj["playlistId"] = id
+		sObj := h.songObj(s, genID(album+"|"+artist), genID(primaryArtist(artist)), starredMap[s.ID], nowStr)
+		sObj["id"] = s.ID; sObj["mediaFileId"] = s.ID; sObj["playlistEntryId"] = strconv.Itoa(idx + 1); sObj["playlistId"] = id
 		out = append(out, sObj)
 	}
 	total := len(out)
@@ -968,29 +714,27 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 	set := map[string]bool{}
 	for _, id := range allowed { set[id] = true }
 	out := make([]db.Song, 0, len(songs))
-	for _, s := range songs {
-		if s.SourceID == "" || set[s.SourceID] { out = append(out, s) }
-	}
+	for _, s := range songs { if s.SourceID == "" || set[s.SourceID] { out = append(out, s) } }
 	return out
 }
 
+// 终极越界保护：无论前端传什么奇怪的参数，绝对不让这里发生 panic
 func paginate(data []map[string]any, r *http.Request) []map[string]any {
 	if data == nil { return []map[string]any{} }
-	start, _ := strconv.Atoi(r.URL.Query().Get("_start"))
-	end, _ := strconv.Atoi(r.URL.Query().Get("_end"))
-	if start > len(data) { start = len(data) }
-	if end <= 0 || end > len(data) { end = len(data) }
+	start, err1 := strconv.Atoi(r.URL.Query().Get("_start"))
+	end, err2 := strconv.Atoi(r.URL.Query().Get("_end"))
+	
+	if err1 != nil || start < 0 { start = 0 }
+	if err2 != nil || end <= 0 || end > len(data) { end = len(data) }
 	if start > end { start = end }
+	if start >= len(data) { return []map[string]any{} }
 	
 	res := data[start:end]
 	if res == nil { return []map[string]any{} }
 	return res
 }
 
-func genID(name string) string {
-	h := md5.Sum([]byte(name))
-	return hex.EncodeToString(h[:])
-}
+func genID(name string) string { h := md5.Sum([]byte(name)); return hex.EncodeToString(h[:]) }
 
 var splitArtistRe = regexp.MustCompile(`[、,，&＆;；]|\s+feat\.?\s+|\s+ft\.?\s+|\s+vs\.?\s+|\s*/\s*`)
 
@@ -1002,8 +746,7 @@ func splitArtists(s string) []string {
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p == "" || seen[p] { continue }
-		seen[p] = true
-		out = append(out, p)
+		seen[p] = true; out = append(out, p)
 	}
 	if len(out) == 0 { return []string{s} }
 	return out
