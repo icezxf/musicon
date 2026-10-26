@@ -129,7 +129,6 @@ func (h *Handler) checkAuth(r *http.Request) (string, bool) {
 // ==================== 路由分发 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// 防止路由层 panic 导致整个服务崩溃
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("[navidrome] PANIC recovered: %v", err)
@@ -187,7 +186,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ==================== 收藏处理 ====================
+// ==================== 收藏处理（彻底独立隔离） ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
 	var ids, albumIds, artistIds []string
@@ -204,7 +203,10 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 			artistIds = req.ArtistIds
 		}
 	}
-	if id := r.URL.Query().Get("id"); id != "" { ids = append(ids, id) }
+	
+	if id := r.URL.Query().Get("id"); id != "" {
+		if strings.HasPrefix(id, "al-") { albumIds = append(albumIds, id) } else if strings.HasPrefix(id, "ar-") { artistIds = append(artistIds, id) } else { ids = append(ids, id) }
+	}
 	if aid := r.URL.Query().Get("albumId"); aid != "" { albumIds = append(albumIds, aid) }
 	if arid := r.URL.Query().Get("artistId"); arid != "" { artistIds = append(artistIds, arid) }
 
@@ -212,13 +214,13 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 	val := 0
 	if isStar { val = 1 }
 
-	// 1. 独立处理歌曲
-	for _, id := range ids {
-		cleanID := strings.TrimPrefix(id, "mf-")
-		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+	// 【核心修复】切断前端的级联行为：如果收藏的是专辑或歌手，强制丢弃前端连带传来的歌曲 IDs
+	// 确保歌曲、专辑、歌手绝对相互独立！
+	if len(albumIds) > 0 || len(artistIds) > 0 {
+		ids = nil
 	}
 
-	// 2. 独立处理专辑
+	// 1. 处理专辑收藏
 	for _, aid := range albumIds {
 		cleanID := strings.TrimPrefix(aid, "al-")
 		if isStar {
@@ -228,13 +230,31 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	// 3. 独立处理歌手
+	// 2. 处理歌手收藏
 	for _, arid := range artistIds {
 		cleanID := strings.TrimPrefix(arid, "ar-")
 		if isStar {
 			h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'artist', ?)", user, cleanID)
 		} else {
 			h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'artist' AND item_id = ?", user, cleanID)
+		}
+	}
+
+	// 3. 处理歌曲收藏（带智能兜底：防止前端把专辑/歌手ID发到 ids 里）
+	for _, id := range ids {
+		cleanID := strings.TrimPrefix(id, "mf-")
+		res, _ := h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
+		affected, _ := res.RowsAffected()
+		
+		// 如果没找到这首歌，说明前端可能错误地把专辑/歌手ID放进了ids里，我们将其存入独立表
+		if affected == 0 {
+			if isStar {
+				h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'album', ?)", user, cleanID)
+				h.DB.DB.Exec("INSERT OR IGNORE INTO user_favorites (username, kind, item_id) VALUES (?, 'artist', ?)", user, cleanID)
+			} else {
+				h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'album' AND item_id = ?", user, cleanID)
+				h.DB.DB.Exec("DELETE FROM user_favorites WHERE username = ? AND kind = 'artist' AND item_id = ?", user, cleanID)
+			}
 		}
 	}
 
@@ -269,7 +289,7 @@ func (h *Handler) getFavoriteArtists(user string) map[string]bool {
 	return m
 }
 
-// ==================== 音频流 ====================
+// ==================== 核心：音频流 302 ====================
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request) {
 	songID := r.URL.Query().Get("id")
@@ -609,7 +629,7 @@ func (h *Handler) handlePlaylistRoot(w http.ResponseWriter, r *http.Request, use
 func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p string, user string) {
 	defer func() { recover() }()
 	parts := strings.Split(p, "/")
-	if len(parts) < 2 { w.WriteHeader(http.StatusOK); w.Write([]byte("{}")); return } // 防止越界 panic
+	if len(parts) < 2 { w.WriteHeader(http.StatusOK); w.Write([]byte("{}")); return }
 	id := parts[1]
 	
 	if len(parts) == 2 {
@@ -718,7 +738,6 @@ func (h *Handler) visibleSongs(username string) []db.Song {
 	return out
 }
 
-// 终极越界保护：无论前端传什么奇怪的参数，绝对不让这里发生 panic
 func paginate(data []map[string]any, r *http.Request) []map[string]any {
 	if data == nil { return []map[string]any{} }
 	start, err1 := strconv.Atoi(r.URL.Query().Get("_start"))
