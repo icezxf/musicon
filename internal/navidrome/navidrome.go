@@ -332,12 +332,17 @@ func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string)
 	return
 }
 
-func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 严格返回合法的 ISO 时间格式，防止 DateTime.parse 崩溃
-func safeDate(year int) string {
+// 【致命修复】歌曲的 date 必须是纯年份字符串！
+func safeSongDate(year int) string {
+	if year <= 0 { return "1970" }
+	return strconv.Itoa(year)
+}
+
+// 【致命修复】专辑的 date 官方文档通常是带时间的格式
+func safeAlbumDate(year int) string {
 	if year <= 0 { return "1970-01-01T00:00:00Z" }
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
 }
@@ -480,9 +485,12 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		out = append(out, map[string]any{
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath, "coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
-			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
-			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false, // 官方文档：releases 是 int 1
-			"songCount": agg.count, "duration": agg.dur, // 必须 int
+			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeAlbumDate(minYear),
+			"maxOriginalYear": 0, "minOriginalYear": 0, 
+			"releases": 1, // 官方文档为 1
+			"compilation": false,
+			"songCount": agg.count, 
+			"duration": float64(agg.dur), // 官方文档为浮点
 			"size": agg.size, "genre": "", "genres": nil,
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
@@ -513,7 +521,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 				outAlbum = map[string]any{
 					"id": id, "name": album, "embedArtPath": s.CoverPath, "coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
-					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
+					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeAlbumDate(s.Year),
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
@@ -531,7 +539,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
-			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeDate(0),
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeAlbumDate(0),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"genre": "", "genres": nil, "fullText": " ", "orderAlbumName": "未知专辑",
 			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
@@ -547,7 +555,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = totalDur // 必须 int
+	outAlbum["duration"] = float64(totalDur)
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -617,17 +625,20 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 
 	return map[string]any{
 		"playCount": 0, "playDate": nil, "rating": 0, "starred": isStarred, "starredAt": starredAt,
-		"bookmarkPosition": 0, "id": s.ID, "isDir": false, "type": "music", "mediaType": "song",
-		"path": s.Path, "title": title, "album": album, "artistId": arID, "artist": artist,
-		"albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
-		"coverArt": s.ID, "hasCoverArt": true, "trackNumber": maxNum(1, s.TrackNumber), "discNumber": maxNum(1, s.DiscNumber),
-		"year": s.Year, "date": safeDate(s.Year), "originalYear": 0, "releaseYear": 0, "size": s.FileSize,
-		"suffix": suffix, "duration": dur, "bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre,
-		"genres": nil, "fullText": " " + title + " " + album + " " + artist, "orderTitle": title,
-		"orderAlbumName": album, "orderArtistName": artist, "orderAlbumArtistName": albumArtist,
-		"compilation": false, "lyrics": "[]", "rgAlbumGain": 0.0, "rgAlbumPeak": 0.0, "rgTrackGain": 0.0, "rgTrackPeak": 0.0,
-		"createdAt": nowStr, "updatedAt": nowStr, "bpm": 0, "comment": "", "moods": []string{},
-		"sortName": title, "discSubtitle": "", "mbzTrackId": "", "mbzAlbumId": "", "mbzArtistId": "",
+		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
+		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
+		"coverArt": s.ID, "hasCoverArt": true, 
+		"trackNumber": s.TrackNumber, "discNumber": s.DiscNumber, // 官方文档 discNumber 允许为 0
+		"year": s.Year, 
+		"date": safeSongDate(s.Year), // 【致命修复】歌曲的 date 必须是纯年份！
+		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix, 
+		"duration": float64(dur), // 【致命修复】浮点数
+		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre, "genres": nil,
+		"fullText": " " + title + " " + album + " " + artist, "orderTitle": title, "orderAlbumName": album, 
+		"orderArtistName": artist, "orderAlbumArtistName": albumArtist, "compilation": false, 
+		"lyrics": "[]", // 如果没有，给 "[]" 或者自己组装成文档格式。这里保险起见给 "[]"
+		"rgAlbumGain": -6.4, "rgAlbumPeak": 0.810242, "rgTrackGain": -6.4, "rgTrackPeak": 0.810242,
+		"createdAt": nowStr, "updatedAt": nowStr,
 	}
 }
 
@@ -703,7 +714,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		var size int64; var dur int
 		for _, s := range songs { size += s.FileSize; dur += s.Dur }
 		out = append(out, map[string]any{
-			"id": p.ID, "name": p.Name, "comment": "", "duration": dur, "size": size, "songCount": len(songs),
+			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size, "songCount": len(songs),
 			"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
 			"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
 		})
@@ -722,7 +733,7 @@ func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, 
 	for _, s := range songs { size += s.FileSize; dur += s.Dur }
 	nowStr := time.Now().Format(time.RFC3339)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id": p.ID, "name": p.Name, "comment": "", "duration": dur, "size": size, "songCount": len(songs),
+		"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size, "songCount": len(songs),
 		"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
 		"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
 	})
