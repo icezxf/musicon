@@ -348,14 +348,14 @@ func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
-// 【绝对标准】只返回年份字符串，空则返回空字符串
+// 【绝对标准】返回合法的默认时间
 func safeSongDate(year int) string {
 	if year <= 0 { return "" }
 	return strconv.Itoa(year)
 }
 
 func safeAlbumDate(year int) string {
-	if year <= 0 { return "" }
+	if year <= 0 { return "1970-01-01T00:00:00Z" }
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
 }
 
@@ -391,14 +391,16 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		var starredAt any = nil
+		// 【绝对防御】防止 null 导致前端解析崩溃
+		var starredAt string = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
 		out = append(out, map[string]any{
-			"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
 			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
-			"mbzArtistId": "", "smallImageUrl": nil, "mediumImageUrl": nil, "largeImageUrl": nil,
+			"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "", // 空字符串避免 null
 			"externalUrl": "https://www.last.fm/music/" + name, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
+			"coverArt": id, // 补全 coverArt
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
@@ -434,15 +436,15 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 
 	favArtists := h.getFavoriteArtists(user)
 	isFav := favArtists[searchID]
-	var starredAt any = nil
+	var starredAt string = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 
 	json.NewEncoder(w).Encode(map[string]any{
-		"playCount": 0, "playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt,
+		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 		"id": id, "name": artistName, "coverArt": searchID,
 		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
-		"mbzArtistId": "", "smallImageUrl": nil, "mediumImageUrl": nil, "largeImageUrl": nil,
+		"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
 		"externalUrl": "https://www.last.fm/music/" + artistName, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
@@ -491,7 +493,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		isFav := favAlbums[id]
-		var starredAt any = nil
+		var starredAt string = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
 
 		out = append(out, map[string]any{
@@ -505,8 +507,8 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"duration": float64(agg.dur) + 0.001, 
 			"size": agg.size, "genre": "", "genres": []string{},
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
+			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 			"createdAt": nowStr, "updatedAt": nowStr, "mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
 	}
@@ -537,8 +539,8 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
-					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
+					"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z",
+					"externalInfoUpdatedAt": "0001-01-01T00:00:00Z", "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 					"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 				}
 			}
@@ -551,18 +553,18 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
-			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeAlbumDate(0),
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": "1970-01-01T00:00:00Z",
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
-			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
+			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
+			"rating": 0, "starred": false, "starredAt": "1970-01-01T00:00:00Z", "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 			"createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		}
 	}
 	favAlbums := h.getFavoriteAlbums(user)
 	isFav := favAlbums[searchID]
-	var starredAt any = nil
+	var starredAt string = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
@@ -633,11 +635,11 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
 	
-	var starredAt any = nil
+	var starredAt string = "1970-01-01T00:00:00Z"
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
-		"playCount": 0, "playDate": nil, "rating": 0, "starred": isStarred, "starredAt": starredAt,
+		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isStarred, "starredAt": starredAt,
 		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
 		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
 		"coverArt": s.ID, "hasCoverArt": true, 
@@ -730,7 +732,7 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		out = append(out, map[string]any{
 			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur) + 0.001, "size": size, "songCount": len(songs),
 			"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
-			"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
+			"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": "1970-01-01T00:00:00Z",
 		})
 	}
 	total := len(out)
@@ -749,7 +751,7 @@ func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, 
 	json.NewEncoder(w).Encode(map[string]any{
 		"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur) + 0.001, "size": size, "songCount": len(songs),
 		"ownerName": p.Owner, "ownerId": genID(p.Owner), "public": p.Public, "path": "", "sync": false,
-		"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": nil,
+		"createdAt": nowStr, "updatedAt": nowStr, "rules": []any{}, "evaluatedAt": "1970-01-01T00:00:00Z",
 	})
 }
 
