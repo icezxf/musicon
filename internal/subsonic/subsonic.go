@@ -1615,12 +1615,20 @@ func songToMap(s *db.Song) map[string]any {
 	arID := artistID(s.Artist)
 	coverArt := s.ID
 	if s.CoverPath == "" { coverArt = aID }
-	artists := make([]map[string]any, 0) // 防空
+	
+	artists := make([]map[string]any, 0)
 	for _, name := range splitArtists(s.Artist) {
 		artists = append(artists, map[string]any{"@id": artistID(name), "@name": name})
 	}
 	return map[string]any{
-		"@id": s.ID, "@parent": aID, "@isDir": false, "@title": s.Title, "@album": s.Album, "@artist": s.Artist, "@albumArtist": s.AlbumArtist, "@displayArtist": s.Artist, "@displayAlbumArtist": s.AlbumArtist, "@track": s.TrackNumber, "@discNumber": s.DiscNumber, "@year": s.Year, "@genre": s.Genre, "@coverArt": coverArt, "@size": s.FileSize, "@contentType": ct, "@suffix": suffix, "@duration": s.Dur, "@bitRate": s.Bitrate, "@path": s.Path, "@albumId": aID, "@artistId": arID, "@type": "music", "@created": "2024-01-01T00:00:00.000Z", "@isVideo": false, "@samplingRate": s.SampleRate, "@channelCount": s.Channels, "@composer": s.Composer, "@isrc": s.ISRC, "artists": artists,
+		"@id": s.ID, "@parent": aID, "@isDir": false, "@title": s.Title, "@album": s.Album, "@artist": s.Artist, 
+		"@albumArtist": s.AlbumArtist, "@displayArtist": s.Artist, "@displayAlbumArtist": s.AlbumArtist, 
+		"@track": s.TrackNumber, "@discNumber": s.DiscNumber, "@year": s.Year, "@genre": s.Genre, 
+		"@coverArt": coverArt, "@size": s.FileSize, "@contentType": ct, "@suffix": suffix, 
+		"@duration": s.Dur, "@bitRate": s.Bitrate, "@path": s.Path, "@albumId": aID, "@artistId": arID, 
+		"@type": "music", "@created": "2024-01-01T00:00:00.000Z", "@isVideo": false, 
+		"@samplingRate": s.SampleRate, "@channelCount": s.Channels, "@composer": s.Composer, 
+		"@isrc": s.ISRC, "artists": artists,
 	}
 }
 
