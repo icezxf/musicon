@@ -542,8 +542,8 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"albumArtistId":       arID,
 		"albumArtist":         albumArtist,
 		"albumId":             aID,
-		"coverArt":            s.ID, // 【核心修复】直接返回歌曲ID！
-		"hasCoverArt":         true, // 强制为 true
+		"coverArt":            s.ID, // 客户端需要这个字段去拉图
+		"hasCoverArt":         true, // 告诉客户端有图
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
