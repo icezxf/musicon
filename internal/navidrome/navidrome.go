@@ -287,7 +287,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"starredAt":             nil,
 			"id":                    id,
 			"name":                  name,
-			"coverArt":              id, // 客户端靠它拉歌手图
+			"coverArt":              id, // 歌手封面ID
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
 			"genres":                nil,
@@ -542,8 +542,8 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"albumArtistId":       arID,
 		"albumArtist":         albumArtist,
 		"albumId":             aID,
-		"coverArt":            aID,    // 必须保留，让客户端拿着专辑ID去拉图
-		"hasCoverArt":         true,   // 必须保留，客户端靠这个判断是否有图
+		"coverArt":            s.ID, // 【核心修复】直接返回歌曲ID！
+		"hasCoverArt":         true, // 强制为 true
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
