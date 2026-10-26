@@ -123,7 +123,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
 
-	// 图片接口直接放行，防止拉图失败
+	// 图片接口直接放行
 	if p == "getArtistImage" || p == "getCoverArt" {
 		switch p {
 		case "getArtistImage":
@@ -1193,25 +1193,16 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 	}
 
 	// 剥离重复前缀
-	if strings.HasPrefix(id, "al-al-") {
-		id = strings.TrimPrefix(id, "al-")
-	}
-	if strings.HasPrefix(id, "ar-ar-") {
-		id = strings.TrimPrefix(id, "ar-")
-	}
-	if strings.HasPrefix(id, "pl-pl-") {
-		id = strings.TrimPrefix(id, "pl-")
-	}
+	if strings.HasPrefix(id, "al-al-") { id = strings.TrimPrefix(id, "al-") }
+	if strings.HasPrefix(id, "ar-ar-") { id = strings.TrimPrefix(id, "ar-") }
+	if strings.HasPrefix(id, "pl-pl-") { id = strings.TrimPrefix(id, "pl-") }
 
-	// 1. 明确指明是歌手的，走歌手取图
-	if typ == "artist" || strings.HasPrefix(id, "ar-") {
-		h.serveArtistCover(w, r, user, id, size)
-		return
-	}
+	log.Printf("[getCoverArt] 收到请求 id=%s typ=%s size=%d", id, typ, size)
 
-	// 2. 优先尝试在本地匹配专辑、歌曲的封面（涵盖了 Subsonic 的 al-xxx 和 Nav 的 32 位 MD5）
+	// 1. 优先尝试本地匹配歌曲/专辑封面（不管是 8 位还是 32 位，不管有没有 type）
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath != "" {
+		log.Printf("[getCoverArt] 本地匹配到封面: %s", coverPath)
 		if size > 0 {
 			h.serveThumb(w, r, coverPath, size)
 		} else {
@@ -1220,56 +1211,55 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		return
 	}
 
-	// 3. 如果没匹配到，且是 32 位纯 MD5，可能是 Navidrome 客户端直接拿歌手 MD5 来要歌手图
-	if len(id) == 32 {
+	// 2. 如果本地没匹配到，且明确是歌手，才去查 NCM
+	if typ == "artist" || strings.HasPrefix(id, "ar-") {
+		log.Printf("[getCoverArt] 本地无匹配，明确为歌手，查 NCM")
 		h.serveArtistCover(w, r, user, id, size)
 		return
 	}
 
+	// 3. 如果本地没匹配到，且是 32 位 MD5，尝试解析为歌手名并查 NCM
+	if len(id) == 32 {
+		name := h.resolveArtistName(id, user)
+		if name != id && name != "" {
+			log.Printf("[getCoverArt] 本地无匹配，32位ID解析为歌手 %s，查 NCM", name)
+			if h.NCM != nil {
+				if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+					if proxyImage(w, d.Pic) {
+						return
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("[getCoverArt] 所有尝试失败，返回默认图")
 	serveDefaultCover(w)
 }
 
+// 【用户要求】纯查 NCM，查不到直接返回透明图
 func (h *Handler) serveArtistCover(w http.ResponseWriter, r *http.Request, user, id string, size int) {
 	name := r.URL.Query().Get("artist_name")
 	if name == "" {
 		name = h.resolveArtistName(id, user)
 	}
-	
-	// 优先去网易云
+	log.Printf("[serveArtistCover] id=%s name=%s", id, name)
+
 	if h.NCM != nil && name != "" && name != id {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+			log.Printf("[serveArtistCover] NCM 返回图片: %s", d.Pic)
 			if proxyImage(w, d.Pic) {
 				return
 			}
+			log.Printf("[serveArtistCover] 下载图片失败")
+		} else if err != nil {
+			log.Printf("[serveArtistCover] NCM 查询失败: %v", err)
+		} else {
+			log.Printf("[serveArtistCover] NCM 查询成功但无图片")
 		}
 	}
-	
-	// 洛雪
-	if h.LX != nil && name != "" && name != id {
-		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-			if proxyImage(w, d.Pic) {
-				return
-			}
-		}
-	}
-	
-	// 兜底：用本地专辑封面
-	songs := h.visibleSongs(user)
-	for _, s := range songs {
-		for _, n := range splitArtists(s.Artist) {
-			if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
-				if s.CoverPath != "" {
-					if size > 0 {
-						h.serveThumb(w, r, s.CoverPath, size)
-					} else {
-						serveLocalCover(w, r, s.CoverPath)
-					}
-					return
-				}
-			}
-		}
-	}
-	
+
+	log.Printf("[serveArtistCover] 未获取到图片，返回默认图")
 	serveDefaultCover(w)
 }
 
