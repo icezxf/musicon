@@ -31,12 +31,12 @@ func New(database *db.Holder, am *alist.Manager, c *config.Config) *Handler {
 	h := &Handler{DB: database, AList: am, Cfg: c}
 	h.DB.DB.Exec("ALTER TABLE songs ADD COLUMN starred INTEGER DEFAULT 0")
 	
-	// 【核心新增】建立独立的收藏表，用于存储歌手和专辑的收藏状态
+	// 建立独立的收藏表（用于分离歌曲、专辑、歌手的收藏）
 	h.DB.DB.Exec(`
 		CREATE TABLE IF NOT EXISTS user_favorites (
 			username TEXT NOT NULL,
 			kind TEXT NOT NULL,      -- 'artist' 或 'album'
-			item_id TEXT NOT NULL,   -- 对应的 md5 ID
+			item_id TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (username, kind, item_id)
 		)
@@ -192,17 +192,15 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "playlist/"):
 		h.handlePlaylistSub(w, r, p, username)
 	default:
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
 	}
 }
 
-// ==================== 收藏处理（彻底解耦独立） ====================
+// ==================== 收藏处理（独立隔离） ====================
 
 func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string) {
-	var ids []string
-	var albumIds []string
-	var artistIds []string
+	var ids, albumIds, artistIds []string
 
 	if r.Method == http.MethodPost {
 		var req struct {
@@ -224,13 +222,13 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 	val := 0
 	if isStar { val = 1 }
 
-	// 1. 处理歌曲收藏（更新 songs 表）
+	// 歌曲
 	for _, id := range ids {
 		cleanID := strings.TrimPrefix(id, "mf-")
 		h.DB.DB.Exec("UPDATE songs SET starred = ? WHERE id = ?", val, cleanID)
 	}
 
-	// 2. 处理专辑收藏
+	// 专辑
 	for _, aid := range albumIds {
 		cleanID := strings.TrimPrefix(aid, "al-")
 		if isStar {
@@ -240,7 +238,7 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 		}
 	}
 
-	// 3. 处理歌手收藏
+	// 歌手
 	for _, arid := range artistIds {
 		cleanID := strings.TrimPrefix(arid, "ar-")
 		if isStar {
@@ -255,18 +253,16 @@ func (h *Handler) handleStar(w http.ResponseWriter, r *http.Request, user string
 }
 
 func (h *Handler) getStarredMap() map[string]bool {
-	var starredIDs = map[string]bool{}
+	m := map[string]bool{}
 	rows, err := h.DB.DB.Query("SELECT id FROM songs WHERE starred = 1")
 	if err == nil {
 		for rows.Next() {
 			var id string
-			if rows.Scan(&id) == nil {
-				starredIDs[id] = true
-			}
+			if rows.Scan(&id) == nil { m[id] = true }
 		}
 		rows.Close()
 	}
-	return starredIDs
+	return m
 }
 
 func (h *Handler) getFavoriteAlbums(user string) map[string]bool {
@@ -364,15 +360,17 @@ func isStarred(r *http.Request) bool {
 	return v == "true" || v == "1"
 }
 
+// 获取主歌手名，统一各处的 ID 映射
 func primaryArtist(artist string) string {
 	parts := splitArtists(artist)
 	if len(parts) > 0 { return parts[0] }
 	return artist
 }
 
-func safeDate(year int) any {
-	if year <= 0 { return "0001-01-01T00:00:00Z" }
-	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
+// 文档要求的日期格式是年份字符串（如 "2013"），如果是 0 则给空
+func safeYear(year int) string {
+	if year <= 0 { return "" }
+	return strconv.Itoa(year)
 }
 
 // ==================== 歌手与专辑 ====================
@@ -392,7 +390,6 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 		for _, name := range splitArtists(artist) {
 			if nameFilter != "" && !strings.Contains(strings.ToLower(name), nameFilter) { continue }
 			id := genID(name)
-			// 独立收藏过滤
 			if starFilter && !favArtists[id] { continue }
 
 			if _, ok := artistMap[name]; !ok {
@@ -401,7 +398,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			}
 			artistMap[name].songCount++
 			artistMap[name].size += s.FileSize
-			album, _, _, _, _ := cleanSongMeta(s)
+			album, _, _, _, _ := cleanMovie(s)
 			artistAlbums[name][album] = true
 		}
 	}
@@ -424,14 +421,14 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 			"name":                  name,
 			"albumCount":            len(artistAlbums[name]),
 			"songCount":             agg.songCount,
-			"genres":                []string{},
+			"genres":                nil, // 文档允许 null
 			"fullText":              " " + name,
 			"orderArtistName":       name,
 			"size":                  agg.size,
 			"mbzArtistId":           "",
-			"smallImageUrl":         nil,
-			"mediumImageUrl":        nil,
-			"largeImageUrl":         nil,
+			"smallImageUrl":         "",
+			"mediumImageUrl":        "",
+			"largeImageUrl":         "",
 			"externalUrl":           "https://www.last.fm/music/" + name,
 			"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 		})
@@ -464,11 +461,8 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		}
 	}
 
-	if artistName == "" {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		return
-	}
+	// 【防崩溃】找不到返回兜底空对象，不返回 404
+	if artistName == "" { artistName = "未知歌手" }
 
 	favArtists := h.getFavoriteArtists(user)
 	isFav := favArtists[id]
@@ -485,14 +479,14 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		"name":                  artistName,
 		"albumCount":            len(albumSet),
 		"songCount":             songCount,
-		"genres":                []string{},
+		"genres":                nil,
 		"fullText":              " " + artistName,
 		"orderArtistName":       artistName,
 		"size":                  totalSize,
 		"mbzArtistId":           "",
-		"smallImageUrl":         nil,
-		"mediumImageUrl":        nil,
-		"largeImageUrl":         nil,
+		"smallImageUrl":         "",
+		"mediumImageUrl":        "",
+		"largeImageUrl":         "",
 		"externalUrl":           "https://www.last.fm/music/" + artistName,
 		"externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
@@ -517,10 +511,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		if artistIDFilter != "" {
 			matched := false
 			for _, n := range splitArtists(artist) {
-				if genID(n) == artistIDFilter {
-					matched = true
-					break
-				}
+				if genID(n) == artistIDFilter { matched = true; break }
 			}
 			if !matched { continue }
 		}
@@ -528,7 +519,6 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 
 		k := album + "|" + artist
 		id := genID(k)
-		// 独立收藏过滤
 		if starFilter && !favAlbums[id] { continue }
 
 		if _, ok := albumMap[k]; !ok {
@@ -560,13 +550,19 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"id": id, "name": agg.name, "embedArtPath": agg.coverPath,
 			"coverArt": id,
 			"artistId": arID, "artist": agg.artist, "albumArtistId": arID, "albumArtist": agg.artist,
-			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, "date": safeDate(minYear),
-			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": []string{},
+			"allArtistIds": arID, "maxYear": agg.maxYear, "minYear": minYear, 
+			"date": safeYear(minYear), // 文档要求年份字符串
+			"maxOriginalYear": 0, "minOriginalYear": 0, 
+			"releases": 1, // 文档是整数 1
+			"compilation": false,
+			"songCount": agg.count, 
+			"duration": float64(agg.dur), // 文档是浮点数
+			"size": agg.size, "genre": "", 
+			"genres": nil, // 文档允许 null
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
-			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nil,
-			"rating": 0, "starred": isFav, "starredAt": starredAt, "externalInfoUpdatedAt": nil,
-			"createdAt": nowStr, "updatedAt": nowStr,
+			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, 
+			"playDate": nil, "rating": 0, "starred": isFav, "starredAt": starredAt, 
+			"externalInfoUpdatedAt": nil, "createdAt": nowStr, "updatedAt": nowStr,
 			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
 		})
 	}
@@ -592,9 +588,12 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"id": id, "name": album, "embedArtPath": s.CoverPath,
 					"coverArt": id,
 					"artistId": arID, "artist": artist, "albumArtistId": arID, "albumArtist": albumArtist,
-					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeDate(s.Year),
-					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
-					"genre": s.Genre, "genres": []string{}, "fullText": " " + album + " " + artist,
+					"allArtistIds": arID, "maxYear": s.Year, "minYear": s.Year, "date": safeYear(s.Year),
+					"maxOriginalYear": 0, "minOriginalYear": 0, 
+					"releases": 1, // 文档是整数 1
+					"compilation": false,
+					"genre": s.Genre, "genres": nil, // 文档允许 null
+					"fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
 					"playCount": 0, "playDate": nil, "rating": 0, "starred": false, "starredAt": nil,
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
@@ -606,10 +605,20 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 			totalSize += s.FileSize
 		}
 	}
+	
+	// 【防崩溃】找不到返回兜底空对象，不返回 404
 	if outAlbum == nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		return
+		outAlbum = map[string]any{
+			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
+			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": "",
+			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
+			"genre": "", "genres": nil, "fullText": " ", "orderAlbumName": "未知专辑",
+			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": nil, 
+			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil, 
+			"createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
+			"mbzAlbumId": "", "mbzAlbumArtistId": "", "mbzReleaseGroupId": "",
+		}
 	}
 	
 	favAlbums := h.getFavoriteAlbums(user)
@@ -620,7 +629,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
 	outAlbum["songCount"] = songCount
-	outAlbum["duration"] = float64(totalDur)
+	outAlbum["duration"] = float64(totalDur) // 文档是浮点数
 	outAlbum["size"] = totalSize
 	json.NewEncoder(w).Encode(outAlbum)
 }
@@ -675,11 +684,13 @@ func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user
 	for _, s := range songs {
 		if s.ID == id { found = &s; break }
 	}
+	
+	// 【防崩溃】找不到返回兜底，不返回 404
 	if found == nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		json.NewEncoder(w).Encode(h.songObj(db.Song{ID: id, Title: "未知歌曲"}, "", "", false, time.Now().Format(time.RFC3339)))
 		return
 	}
+	
 	album, artist, _, _, _ := cleanSongMeta(*found)
 	aID := genID(album + "|" + artist)
 	arID := genID(primaryArtist(artist))
@@ -689,15 +700,15 @@ func (h *Handler) getSongDetail(w http.ResponseWriter, r *http.Request, id, user
 
 func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr string) map[string]any {
 	album, artist, albumArtist, title, suffix := cleanSongMeta(s)
-	dur := float64(s.Dur)
-	if dur <= 0 { dur = 0.1 }
+	dur := s.Dur
+	if dur <= 0 { dur = 1 }
 
 	var starredAt any = nil
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
 		"playCount":           0,
-		"playDate":            nil,
+		"playDate":            nil, // 未播放给 null 合法
 		"rating":              0,
 		"starred":             isStarred,
 		"starredAt":           starredAt,
@@ -719,16 +730,16 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"trackNumber":         maxNum(1, s.TrackNumber),
 		"discNumber":          maxNum(1, s.DiscNumber),
 		"year":                s.Year,
-		"date":                safeDate(s.Year),
+		"date":                safeYear(s.Year), // 文档是年份字符串
 		"originalYear":        0,
 		"releaseYear":         0,
 		"size":                s.FileSize,
 		"suffix":              suffix,
-		"duration":            dur,
+		"duration":            float64(dur), // 文档是浮点数
 		"bitRate":             s.Bitrate,
 		"channels":            s.Channels,
 		"genre":               s.Genre,
-		"genres":              []string{},
+		"genres":              nil, // 文档允许 null
 		"fullText":            " " + title + " " + album + " " + artist,
 		"orderTitle":          title,
 		"orderAlbumName":      album,
@@ -816,10 +827,12 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				w.Write([]byte(`{"error":"bad request"}`))
 				return
 			}
+			
 			if req.Name != "" { h.DB.DB.Exec(`UPDATE playlists SET name=? WHERE id=?`, req.Name, id) }
 			h.DB.DB.Exec(`UPDATE playlists SET comment=? WHERE id=?`, req.Comment, id)
 			b := 0; if req.Public { b = 1 }
 			h.DB.DB.Exec(`UPDATE playlists SET public=? WHERE id=?`, b, id)
+			
 			w.Write([]byte("{}"))
 		}
 	} else if len(parts) == 3 && parts[2] == "tracks" {
@@ -837,17 +850,23 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				w.Write([]byte(`{"error":"bad request"}`))
 				return
 			}
+			
 			if req.Ids != nil {
 				if arr, ok := req.Ids.([]interface{}); ok {
 					for _, item := range arr {
-						if s, ok := item.(string); ok { songIDs = append(songIDs, s) }
+						if s, ok := item.(string); ok {
+							songIDs = append(songIDs, s)
+						}
 					}
 				} else if str, ok := req.Ids.(string); ok {
 					songIDs = strings.Split(str, ",")
 				}
 			}
+			
 			if len(songIDs) > 0 {
+				log.Printf("[navidrome] adding %d songs to playlist %s", len(songIDs), id)
 				if err := h.DB.AddSongsToPlaylist(id, songIDs); err != nil {
+					log.Printf("[navidrome] AddSongsToPlaylist err: %v", err)
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write([]byte(`{"error":"add failed"}`))
 					return
@@ -865,7 +884,9 @@ func (h *Handler) handlePlaylistSub(w http.ResponseWriter, r *http.Request, p st
 				}
 			}
 			if len(toRemove) > 0 {
-				h.DB.RemoveSongsFromPlaylist(id, toRemove)
+				if err := h.DB.RemoveSongsFromPlaylist(id, toRemove); err != nil {
+					log.Printf("[navidrome] RemoveSongsFromPlaylist err: %v", err)
+				}
 			}
 			w.Write([]byte("{}"))
 		}
@@ -885,10 +906,10 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 		for _, s := range songs { size += s.FileSize; dur += s.Dur }
 
 		out = append(out, map[string]any{
-			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size,
-			"songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
+			"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur),
+			"size": size, "songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
 			"public": p.Public, "path": "", "sync": false, "createdAt": nowStr, "updatedAt": nowStr,
-			"rules": nil, "evaluatedAt": nil,
+			"rules": []any{}, "evaluatedAt": nil,
 		})
 	}
 	total := len(out)
@@ -900,8 +921,8 @@ func (h *Handler) getPlaylists(w http.ResponseWriter, r *http.Request, user stri
 func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, user string) {
 	p, err := h.DB.GetPlaylist(id)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{})
 		return
 	}
 	songs, _ := h.DB.GetPlaylistSongs(id)
@@ -914,7 +935,7 @@ func (h *Handler) getPlaylistDetail(w http.ResponseWriter, r *http.Request, id, 
 		"id": p.ID, "name": p.Name, "comment": "", "duration": float64(dur), "size": size,
 		"songCount": len(songs), "ownerName": p.Owner, "ownerId": genID(p.Owner),
 		"public": p.Public, "path": "", "sync": false, "createdAt": nowStr, "updatedAt": nowStr,
-		"rules": nil, "evaluatedAt": nil,
+		"rules": []any{}, "evaluatedAt": nil,
 	})
 }
 
