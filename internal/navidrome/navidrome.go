@@ -418,12 +418,13 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 		return
 	}
 
+	// 严格对齐文档，防止 Flutter 解析崩溃
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount":             0,
-		"playDate":              time.Now().Format(time.RFC3339),
+		"playDate":              time.Now().Format(time.RFC3339), // 必须是字符串
 		"rating":                0,
 		"starred":               false,
-		"starredAt":             nil,
+		"starredAt":             time.Now().Format(time.RFC3339), // 防闪退，改为时间字符串
 		"id":                    id,
 		"name":                  artistName,
 		"albumCount":            len(albumSet),
@@ -486,7 +487,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 			"songCount": agg.count, "duration": float64(agg.dur), "size": agg.size, "genre": "", "genres": nil,
 			"fullText": " " + agg.name + " " + agg.artist, "orderAlbumName": agg.name,
 			"orderAlbumArtistName": agg.artist, "paths": agg.paths, "playCount": 0, "playDate": nowStr,
-			"rating": 0, "starred": false, "starredAt": nil, "externalInfoUpdatedAt": nil,
+			"rating": 0, "starred": false, "starredAt": nowStr, "externalInfoUpdatedAt": nil,
 			"createdAt": nowStr, "updatedAt": nowStr,
 		})
 	}
@@ -516,7 +517,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 					"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 					"genre": s.Genre, "genres": nil, "fullText": " " + album + " " + artist,
 					"orderAlbumName": album, "orderAlbumArtistName": artist, "paths": s.Path,
-					"playCount": 0, "playDate": time.Now().Format(time.RFC3339), "rating": 0, "starred": false, "starredAt": nil,
+					"playCount": 0, "playDate": time.Now().Format(time.RFC3339), "rating": 0, "starred": false, "starredAt": time.Now().Format(time.RFC3339),
 					"externalInfoUpdatedAt": nil, "createdAt": time.Now().Format(time.RFC3339), "updatedAt": time.Now().Format(time.RFC3339),
 				}
 			}
@@ -610,7 +611,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, lyricsStr string, nowStr 
 		"playDate":            nowStr,
 		"rating":              0,
 		"starred":             false,
-		"starredAt":           nil,
+		"starredAt":           nowStr,
 		"bookmarkPosition":    0,
 		"id":                  s.ID,
 		"path":                s.Path,
