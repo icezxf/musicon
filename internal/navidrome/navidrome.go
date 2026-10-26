@@ -344,13 +344,13 @@ func cleanSongMeta(s db.Song) (album, artist, albumArtist, title, suffix string)
 	return
 }
 
-func maxNum(a, b int) int { if a > b { return a }; return b }
 func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return v == "true" || v == "1" }
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
+// 【绝对兜底】强制拦截年份和日期
 func safeDate(year int) string {
-	if year <= 0 { return "" } 
-	return fmt.Sprintf("%04d", year) // 只给年份，防止 int.parse 崩溃
+	if year <= 0 { return "1970" }
+	return fmt.Sprintf("%04d", year) 
 }
 
 // ==================== 歌手与专辑 ====================
@@ -385,7 +385,7 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		var starredAt any = "1970-01-01T00:00:00Z" // 兜底，不传 nil
+		var starredAt any = "1970-01-01T00:00:00Z" // 兜底
 		if isFav { starredAt = nowStr }
 		out = append(out, map[string]any{
 			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
@@ -627,20 +627,25 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
 	
-	// 绝对不传 null，防止前端 DateTime.parse 崩溃
+	trackNum := s.TrackNumber
+	if trackNum <= 0 { trackNum = 1 }
+	discNum := s.DiscNumber
+	if discNum <= 0 { discNum = 1 }
+
 	var starredAt any = "1970-01-01T00:00:00Z"
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
 		"playCount": 0, 
-		"playDate": "1970-01-01T00:00:00Z", // 绝对不传 null
+		"playDate": "1970-01-01T00:00:00Z", 
 		"rating": 0, 
 		"starred": isStarred, 
 		"starredAt": starredAt,
 		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
 		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
 		"coverArt": s.ID, "hasCoverArt": true, 
-		"trackNumber": maxNum(1, s.TrackNumber), "discNumber": maxNum(1, s.DiscNumber),
+		"trackNumber": trackNum, // 【绝对兜底】不能为0
+		"discNumber": discNum, // 【绝对兜底】不能为0
 		"year": s.Year, 
 		"date": safeDate(s.Year), 
 		"originalYear": 0, "releaseYear": 0, "size": s.FileSize, "suffix": suffix, 
@@ -648,7 +653,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre, "genres": []string{},
 		"fullText": " " + title + " " + album + " " + artist, "orderTitle": title, "orderAlbumName": album, 
 		"orderArtistName": artist, "orderAlbumArtistName": albumArtist, "compilation": false, 
-		"lyrics": "[{\"lang\":\"xxx\",\"line\":[{\"start\":0,\"value\":\" \"}],\"synced\":false}]", // 【致命修复】给一个包含实际元素的安全 JSON，防止 lyric.line[0] 越界崩溃
+		"lyrics": "[{\"lang\":\"xxx\",\"line\":[{\"start\":0,\"value\":\" \"}],\"synced\":false}]", 
 		"rgAlbumGain": -6.4, "rgAlbumPeak": 0.810242, "rgTrackGain": -6.4, "rgTrackPeak": 0.810242,
 		"createdAt": nowStr, "updatedAt": nowStr,
 	}
