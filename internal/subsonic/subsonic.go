@@ -108,7 +108,6 @@ func (h *Handler) getCachedRawURL(songID, providerID, path string) (string, erro
 // ==================== 路由 ====================
 
 func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
-	// 支持 OpenSubsonic formPost
 	if r.Method == http.MethodPost {
 		r.ParseForm()
 		for k, v := range r.PostForm {
@@ -124,8 +123,9 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 
 	u, pw, t, s := q.Get("u"), q.Get("p"), q.Get("t"), q.Get("s")
 
-	// 【核心修复】图片接口直接放行，免去认证拦截，避免客户端拿不到图
+	// 【核心修复】图片接口免认证，并打印拦截日志
 	if p == "getArtistImage" || p == "getCoverArt" {
+		log.Printf("[subsonic] 拦截图片请求: %s user=%s id=%s type=%s", p, u, q.Get("id"), q.Get("type"))
 		switch p {
 		case "getArtistImage":
 			h.getArtistImage(w, r, u)
@@ -189,7 +189,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case "getTopSongs":
 		h.getTopSongs(w, r, u)
 	case "getSongs":
-		h.getSongs(w, r, u) // 【已修复】补上了这个函数
+		h.getSongs(w, r, u)
 	case "getSimilarSongs":
 		h.getSimilarSongs(w, r, u, "similarSongs")
 	case "getSimilarSongs2":
@@ -919,7 +919,6 @@ func (h *Handler) getTopSongs(w http.ResponseWriter, r *http.Request, user strin
 	})
 }
 
-// 【补充】getSongs 路由调用的实现
 func (h *Handler) getSongs(w http.ResponseWriter, r *http.Request, user string) {
 	genre := r.URL.Query().Get("genre")
 	artist := r.URL.Query().Get("artist")
@@ -1084,7 +1083,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 		return
 	}
 	
-	// 【核心容错】对 URL 进行转义，防止空格和中文导致客户端解析失败
 	if u, err := url.Parse(rawURL); err == nil {
 		rawURL = u.String()
 		log.Printf("[stream] %s user=%s %s -> 302 %s", r.Method, user, id, u.Host)
@@ -1094,7 +1092,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, user string) {
 
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.Header().Set("Accept-Ranges", "bytes")
-	// 维持标准 302 跳转
 	http.Redirect(w, r, rawURL, http.StatusFound)
 }
 
@@ -1200,7 +1197,7 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 1. 剥离客户端自作主张拼接的重复前缀
+	// 剥离前缀
 	if strings.HasPrefix(id, "al-al-") {
 		id = strings.TrimPrefix(id, "al-")
 	}
@@ -1211,7 +1208,6 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		id = strings.TrimPrefix(id, "pl-")
 	}
 
-	// 2. 智能推断 type（棉花音乐有时会漏传 type 参数）
 	if typ == "" {
 		if strings.HasPrefix(id, "ar-") {
 			typ = "artist"
@@ -1222,27 +1218,44 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 3. 处理歌手封面
 	if typ == "artist" {
 		name := r.URL.Query().Get("artist_name")
 		if name == "" {
 			name = h.resolveArtistName(id, user)
 		}
-		if h.NCM != nil && name != "" {
+		
+		log.Printf("[getCoverArt] 准备获取歌手封面: id=%s, name=%s", id, name)
+
+		// 优先去网易云拉取
+		if h.NCM != nil && name != "" && name != id {
 			if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
-				proxyImage(w, d.Pic)
-				return
+				log.Printf("[getCoverArt] 网易云返回图片: %s", d.Pic)
+				if proxyImage(w, d.Pic) {
+					return
+				}
+			} else if err != nil {
+				log.Printf("[getCoverArt] 网易云查询歌手失败: %v", err)
+			} else {
+				log.Printf("[getCoverArt] 网易云查询歌手成功但无图片: %s", name)
 			}
 		}
-		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-			proxyImage(w, d.Pic)
-			return
+		
+		// 网易云失败，去洛雪拉取
+		if h.LX != nil && name != "" && name != id {
+			if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
+				log.Printf("[getCoverArt] 洛雪返回图片: %s", d.Pic)
+				if proxyImage(w, d.Pic) {
+					return
+				}
+			}
 		}
 		
+		// 外网都失败了，走本地兜底
 		songs := h.visibleSongs(user)
 		for _, s := range songs {
 			for _, n := range splitArtists(s.Artist) {
 				if artistID(n) == id && s.CoverPath != "" {
+					log.Printf("[getCoverArt] 网易云和洛雪均失败，使用本地专辑封面兜底: %s", s.CoverPath)
 					if size > 0 {
 						h.serveThumb(w, r, s.CoverPath, size)
 					} else {
@@ -1252,11 +1265,11 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 				}
 			}
 		}
+		log.Printf("[getCoverArt] 彻底失败，返回默认透明图")
 		serveDefaultCover(w)
 		return
 	}
 
-	// 4. 处理歌曲/专辑/歌单封面
 	coverPath := h.findCoverPath(id, typ, user)
 	if coverPath == "" {
 		serveDefaultCover(w)
@@ -1273,13 +1286,11 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 func (h *Handler) findCoverPath(id, typ, user string) string {
 	songs := h.visibleSongs(user)
 
-	// 匹配歌曲 ID
 	for _, s := range songs {
 		if s.ID == id {
 			if s.CoverPath != "" {
 				return s.CoverPath
 			}
-			// 回退：找同一张专辑里有封面的歌
 			for _, s2 := range songs {
 				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
 					return s2.CoverPath
@@ -1289,14 +1300,21 @@ func (h *Handler) findCoverPath(id, typ, user string) string {
 		}
 	}
 
-	// 匹配专辑 ID（不管 type 传没传，只要 id 能对上专辑就返回）
 	for _, s := range songs {
 		if albumID(s.Album, s.Artist) == id && s.CoverPath != "" {
 			return s.CoverPath
 		}
 	}
 
-	// 匹配歌单 ID
+	for _, s := range songs {
+		for _, name := range splitArtists(s.Artist) {
+			aid := artistID(name)
+			if (aid == id || strings.TrimPrefix(aid, "ar-") == id) && s.CoverPath != "" {
+				return s.CoverPath
+			}
+		}
+	}
+
 	if typ == "playlist" || strings.HasPrefix(id, "pl-") {
 		realID := strings.TrimPrefix(id, "pl-")
 		plSongs, _ := h.DB.GetPlaylistSongs(realID)
@@ -1327,7 +1345,6 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	thumbPath := fmt.Sprintf("%s/%s_%d.jpg", thumbDir, base, size)
 	
-	// 如果缓存存在，且文件正常（大于 0 字节），直接返回
 	if fi, err := os.Stat(thumbPath); err == nil && fi.Size() > 0 {
 		http.ServeFile(w, r, thumbPath)
 		return
@@ -1340,18 +1357,14 @@ func (h *Handler) serveThumb(w http.ResponseWriter, r *http.Request, path string
 	}
 	defer f.Close()
 	
-	// 尝试解码内嵌图
 	img, _, err := image.Decode(f)
 	if err != nil {
-		// 【核心容错】如果解码失败（格式不标准），绝不返回 404，直接把原文件塞给客户端！
 		serveLocalCover(w, r, path)
 		return
 	}
 	
-	// 生成缩略图
 	thumb := imaging.Fill(img, size, size, imaging.Center, imaging.Lanczos)
 	if err := imaging.Save(thumb, thumbPath, imaging.JPEGQuality(85)); err != nil {
-		// 如果保存缓存失败，直接在内存中编码并返回给客户端，绝不留白
 		w.Header().Set("Content-Type", "image/jpeg")
 		imaging.Encode(w, thumb, imaging.JPEG, imaging.JPEGQuality(85))
 		return
@@ -1385,28 +1398,36 @@ func serveLocalCover(w http.ResponseWriter, r *http.Request, path string) {
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }
 
-func proxyImage(w http.ResponseWriter, url string) {
-	client := &http.Client{Timeout: 15 * time.Second}
+func proxyImage(w http.ResponseWriter, url string) bool {
+	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		serveDefaultCover(w)
-		return
+		log.Printf("[proxyImage] NewRequest err: %v", err)
+		return false
 	}
 	req.Header.Set("Referer", "https://music.163.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	
 	resp, err := client.Do(req)
 	if err != nil {
-		serveDefaultCover(w)
-		return
+		log.Printf("[proxyImage] Do req err: %v", err)
+		return false
 	}
 	defer resp.Body.Close()
+	
 	if resp.StatusCode != http.StatusOK {
-		serveDefaultCover(w)
-		return
+		log.Printf("[proxyImage] bad status: %d", resp.StatusCode)
+		return false
 	}
+	
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	io.Copy(w, io.LimitReader(resp.Body, 10<<20))
+	_, err = io.Copy(w, io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		log.Printf("[proxyImage] copy err: %v", err)
+		return false
+	}
+	return true
 }
 
 // ==================== 歌单 ====================
@@ -1782,24 +1803,24 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 	})
 }
 
-// ==================== 精准歌手解析（废弃缓存，实时查库） ====================
 func (h *Handler) resolveArtistName(id, user string) string {
 	if id == "" {
 		return ""
 	}
-	// 直接实时遍历查询，确保 8位前缀和 32位MD5 百分百匹配
+	rawID := id
+	if !strings.HasPrefix(rawID, "ar-") && len(rawID) == 8 {
+		rawID = "ar-" + rawID
+	}
+
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, name := range splitArtists(s.Artist) {
-			// 1. 匹配 Subsonic 的 8 位 ar- 格式
-			if artistID(name) == id {
+			if artistID(name) == rawID {
 				return name
 			}
-			// 2. 匹配 Navidrome 的 32 位 MD5 格式
 			if fmt.Sprintf("%x", md5.Sum([]byte(name))) == id {
 				return name
 			}
-			// 3. 匹配原始名字
 			if name == id {
 				return name
 			}
@@ -1811,27 +1832,38 @@ func (h *Handler) resolveArtistName(id, user string) string {
 func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user string) {
 	id := r.URL.Query().Get("id")
 	name := h.resolveArtistName(id, user)
+	
+	log.Printf("[getArtistImage] 收到歌手封面请求: id=%s, name=%s", id, name)
 
 	if h.NCM != nil && name != "" && name != id {
 		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
-			proxyImage(w, d.Pic)
-			return
+			log.Printf("[getArtistImage] 网易云返回图片: %s", d.Pic)
+			if proxyImage(w, d.Pic) {
+				return
+			}
+		} else if err != nil {
+			log.Printf("[getArtistImage] 网易云查询失败: %v", err)
+		} else {
+			log.Printf("[getArtistImage] 网易云查询成功但无图片: %s", name)
 		}
 	}
 
 	if h.LX != nil && name != "" && name != id {
 		if d, err := h.LX.GetSingerDetail(name); err == nil && d.Pic != "" {
-			proxyImage(w, d.Pic)
-			return
+			log.Printf("[getArtistImage] 洛雪返回图片: %s", d.Pic)
+			if proxyImage(w, d.Pic) {
+				return
+			}
 		}
 	}
 	
-	// 【核心兜底】实在没图，用本地专辑封面代替歌手图，避免显示透明八角形
+	// 兜底：用本地专辑封面代替歌手图
 	songs := h.visibleSongs(user)
 	for _, s := range songs {
 		for _, n := range splitArtists(s.Artist) {
 			if artistID(n) == id || fmt.Sprintf("%x", md5.Sum([]byte(n))) == id {
 				if s.CoverPath != "" {
+					log.Printf("[getArtistImage] 使用本地专辑封面兜底: %s", s.CoverPath)
 					serveLocalCover(w, r, s.CoverPath)
 					return
 				}
@@ -1839,6 +1871,7 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 		}
 	}
 	
+	log.Printf("[getArtistImage] 彻底失败，返回默认透明图")
 	serveDefaultCover(w)
 }
 
