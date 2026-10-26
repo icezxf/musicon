@@ -1192,58 +1192,34 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
-	// 剥离重复前缀
-	if strings.HasPrefix(id, "al-al-") { id = strings.TrimPrefix(id, "al-") }
-	if strings.HasPrefix(id, "ar-ar-") { id = strings.TrimPrefix(id, "ar-") }
-	if strings.HasPrefix(id, "pl-pl-") { id = strings.TrimPrefix(id, "pl-") }
-
 	log.Printf("[getCoverArt] 收到请求 id=%s typ=%s size=%d", id, typ, size)
 
-	// ============== 核心修复：本地绝对优先匹配 ==============
-	songs := h.visibleSongs(user)
-	
-	// 1. 先查是不是歌曲 ID
-	for _, s := range songs {
-		if s.ID == id {
-			if s.CoverPath != "" {
-				log.Printf("[getCoverArt] 匹配到歌曲封面: %s", s.CoverPath)
-				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
-				return
-			}
-			// 如果这首歌没封面，找它同专辑的歌
-			for _, s2 := range songs {
-				if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
-					log.Printf("[getCoverArt] 匹配到同专辑封面: %s", s2.CoverPath)
-					if size > 0 { h.serveThumb(w, r, s2.CoverPath, size) } else { serveLocalCover(w, r, s2.CoverPath) }
+	// 1. 处理客户端前缀
+	rawID := id
+	if strings.HasPrefix(id, "mf-") {
+		id = strings.TrimPrefix(id, "mf-")
+		typ = "song"
+	} else if strings.HasPrefix(id, "al-") {
+		id = strings.TrimPrefix(id, "al-")
+		typ = "album"
+	} else if strings.HasPrefix(id, "ar-") {
+		id = strings.TrimPrefix(id, "ar-")
+		typ = "artist"
+	}
+
+	// 2. 如果是歌曲类型，直接匹配歌曲 ID
+	if typ == "song" {
+		for _, s := range h.visibleSongs(user) {
+			if s.ID == id {
+				if s.CoverPath != "" {
+					log.Printf("[getCoverArt] 匹配到歌曲封面: %s", s.CoverPath)
+					if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
 					return
 				}
-			}
-		}
-	}
-
-	// 2. 再查是不是专辑 ID (支持 al- 前缀 或 32位MD5)
-	for _, s := range songs {
-		album := strings.TrimSpace(s.Album)
-		if album == "" { album = "未知专辑" }
-		artist := strings.TrimSpace(s.Artist)
-		if artist == "" { artist = "未知歌手" }
-
-		if (albumID(album, artist) == id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id) && s.CoverPath != "" {
-			log.Printf("[getCoverArt] 匹配到专辑封面: %s", s.CoverPath)
-			if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
-			return
-		}
-	}
-	// =======================================================
-
-	// 3. 只有本地彻底没找到，且明确是歌手，才去查 NCM
-	if typ == "artist" || strings.HasPrefix(id, "ar-") || len(id) == 32 {
-		name := h.resolveArtistName(id, user)
-		if name != id && name != "" {
-			log.Printf("[getCoverArt] 本地无匹配，尝试查歌手 %s", name)
-			if h.NCM != nil {
-				if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
-					if proxyImage(w, d.Pic) {
+				for _, s2 := range h.visibleSongs(user) {
+					if albumID(s2.Album, s2.Artist) == albumID(s.Album, s.Artist) && s2.CoverPath != "" {
+						log.Printf("[getCoverArt] 匹配到同专辑封面: %s", s2.CoverPath)
+						if size > 0 { h.serveThumb(w, r, s2.CoverPath, size) } else { serveLocalCover(w, r, s2.CoverPath) }
 						return
 					}
 				}
@@ -1251,6 +1227,40 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 		}
 	}
 
+	// 3. 如果是专辑类型，匹配专辑 ID (支持 8 位和 32 位)
+	if typ == "album" {
+		for _, s := range h.visibleSongs(user) {
+			album := strings.TrimSpace(s.Album)
+			if album == "" { album = "未知专辑" }
+			artist := strings.TrimSpace(s.Artist)
+			if artist == "" { artist = "未知歌手" }
+			
+			if (albumID(album, artist) == "al-"+id || fmt.Sprintf("%x", md5.Sum([]byte(album+"|"+artist))) == id) && s.CoverPath != "" {
+				log.Printf("[getCoverArt] 匹配到专辑封面: %s", s.CoverPath)
+				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+				return
+			}
+		}
+	}
+
+	// 4. 如果是歌手类型，走 NCM
+	if typ == "artist" {
+		h.serveArtistCover(w, r, user, id, size)
+		return
+	}
+
+	// 5. 兼容旧逻辑（无前缀，无 type 的猜测）
+	// 先尝试全量本地匹配
+	for _, s := range h.visibleSongs(user) {
+		if s.ID == rawID || albumID(s.Album, s.Artist) == rawID || fmt.Sprintf("%x", md5.Sum([]byte(s.Album+"|"+s.Artist))) == rawID {
+			if s.CoverPath != "" {
+				log.Printf("[getCoverArt] 兼容匹配到封面: %s", s.CoverPath)
+				if size > 0 { h.serveThumb(w, r, s.CoverPath, size) } else { serveLocalCover(w, r, s.CoverPath) }
+				return
+			}
+		}
+	}
+	
 	log.Printf("[getCoverArt] 所有尝试失败，返回默认图")
 	serveDefaultCover(w)
 }
@@ -1794,6 +1804,12 @@ func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user st
 			size = n
 		}
 	}
+	
+	// 处理后缀
+	if strings.HasPrefix(id, "ar-") {
+		id = strings.TrimPrefix(id, "ar-")
+	}
+	
 	h.serveArtistCover(w, r, user, id, size)
 }
 
