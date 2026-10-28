@@ -349,22 +349,13 @@ func isStarred(r *http.Request) bool { v := r.URL.Query().Get("starred"); return
 func primaryArtist(artist string) string { parts := splitArtists(artist); if len(parts) > 0 { return parts[0] }; return artist }
 
 func safeSongDate(year int) string {
-	if year <= 0 { return "" }
+	if year <= 0 { return "1970" }
 	return strconv.Itoa(year)
 }
 
 func safeAlbumDate(year int) string {
 	if year <= 0 { return "1970-01-01T00:00:00Z" }
 	return fmt.Sprintf("%04d-01-01T00:00:00Z", year)
-}
-
-func getBaseURL(r *http.Request) string {
-	host := r.Host
-	scheme := "http"
-	if r.TLS != nil { scheme = "https" }
-	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" { host = fh }
-	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" { scheme = fp }
-	return scheme + "://" + host
 }
 
 // ==================== 歌手与专辑 ====================
@@ -375,7 +366,6 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
 	starFilter := isStarred(r)
 	favArtists := h.getFavoriteArtists(user)
-	baseURL := getBaseURL(r)
 
 	type artistAgg struct { name string; albumCount int; songCount int; size int64 }
 	artistMap := map[string]*artistAgg{}
@@ -400,17 +390,15 @@ func (h *Handler) getArtists(w http.ResponseWriter, r *http.Request, user string
 	for name, agg := range artistMap {
 		id := genID(name)
 		isFav := favArtists[id]
-		var starredAt string = "1970-01-01T00:00:00Z"
+		var starredAt any = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
-		
-		imgURL := baseURL + "/rest/getArtistImage.view?id=" + id // 必须给合法 URL，否则前端在跳转动画里必崩
 
 		out = append(out, map[string]any{
 			"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 			"id": id, "name": name, "albumCount": len(artistAlbums[name]), "songCount": agg.songCount,
 			"genres": []string{}, "fullText": " " + name, "orderArtistName": name, "size": agg.size,
-			"mbzArtistId": "", "smallImageUrl": imgURL, "mediumImageUrl": imgURL, "largeImageUrl": imgURL,
-			"externalUrl": "https://www.last.fm/music/" + name, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
+			"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
+			"externalUrl": "", "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 			"coverArt": id,
 		})
 	}
@@ -447,18 +435,16 @@ func (h *Handler) getArtistDetail(w http.ResponseWriter, r *http.Request, id, us
 
 	favArtists := h.getFavoriteArtists(user)
 	isFav := favArtists[searchID]
-	var starredAt string = "1970-01-01T00:00:00Z"
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
-	baseURL := getBaseURL(r)
-	imgURL := baseURL + "/rest/getArtistImage.view?id=" + searchID
 
 	json.NewEncoder(w).Encode(map[string]any{
 		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isFav, "starredAt": starredAt,
 		"id": id, "name": artistName, "coverArt": searchID,
 		"albumCount": len(albumSet), "songCount": songCount,
 		"genres": []string{}, "fullText": " " + artistName, "orderArtistName": artistName, "size": totalSize,
-		"mbzArtistId": "", "smallImageUrl": imgURL, "mediumImageUrl": imgURL, "largeImageUrl": imgURL,
-		"externalUrl": "https://www.last.fm/music/" + artistName, "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
+		"mbzArtistId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": "",
+		"externalUrl": "", "externalInfoUpdatedAt": "0001-01-01T00:00:00Z",
 	})
 }
 
@@ -506,7 +492,7 @@ func (h *Handler) getAlbums(w http.ResponseWriter, r *http.Request, user string)
 		minYear := agg.minYear
 		if minYear == 9999 { minYear = 0 }
 		isFav := favAlbums[id]
-		var starredAt string = "1970-01-01T00:00:00Z"
+		var starredAt any = "1970-01-01T00:00:00Z"
 		if isFav { starredAt = nowStr }
 
 		out = append(out, map[string]any{
@@ -566,7 +552,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 		outAlbum = map[string]any{
 			"id": id, "name": "未知专辑", "embedArtPath": "", "coverArt": id,
 			"artistId": "", "artist": "未知歌手", "albumArtistId": "", "albumArtist": "未知歌手",
-			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": "1970-01-01T00:00:00Z",
+			"allArtistIds": "", "maxYear": 0, "minYear": 0, "date": safeAlbumDate(0),
 			"maxOriginalYear": 0, "minOriginalYear": 0, "releases": 1, "compilation": false,
 			"genre": "", "genres": []string{}, "fullText": " ", "orderAlbumName": "未知专辑",
 			"orderAlbumArtistName": "未知歌手", "paths": "", "playCount": 0, "playDate": "1970-01-01T00:00:00Z",
@@ -577,7 +563,7 @@ func (h *Handler) getAlbumDetail(w http.ResponseWriter, r *http.Request, id, use
 	}
 	favAlbums := h.getFavoriteAlbums(user)
 	isFav := favAlbums[searchID]
-	var starredAt string = "1970-01-01T00:00:00Z"
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isFav { starredAt = time.Now().Format(time.RFC3339) }
 	outAlbum["starred"] = isFav
 	outAlbum["starredAt"] = starredAt
@@ -648,14 +634,14 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 	dur := s.Dur
 	if dur <= 0 { dur = 1 }
 	
-	var starredAt string = "1970-01-01T00:00:00Z"
+	var starredAt any = "1970-01-01T00:00:00Z"
 	if isStarred { starredAt = nowStr }
 
 	return map[string]any{
 		"playCount": 0, "playDate": "1970-01-01T00:00:00Z", "rating": 0, "starred": isStarred, "starredAt": starredAt,
 		"bookmarkPosition": 0, "id": s.ID, "path": s.Path, "title": title, "album": album, 
 		"artistId": arID, "artist": artist, "albumArtistId": genID(primaryArtist(albumArtist)), "albumArtist": albumArtist, "albumId": aID,
-		"coverArt": s.ID, "hasCoverArt": true, 
+		"coverArt": aID, "hasCoverArt": true, 
 		"trackNumber": maxNum(1, s.TrackNumber), 
 		"discNumber": maxNum(1, s.DiscNumber),
 		"year": s.Year, 
@@ -665,7 +651,7 @@ func (h *Handler) songObj(s db.Song, aID, arID string, isStarred bool, nowStr st
 		"bitRate": s.Bitrate, "channels": s.Channels, "genre": s.Genre, "genres": []string{},
 		"fullText": " " + title + " " + album + " " + artist, "orderTitle": title, "orderAlbumName": album, 
 		"orderArtistName": artist, "orderAlbumArtistName": albumArtist, "compilation": false, 
-		"lyrics": "", 
+		"lyrics": "[{\"lang\":\"xxx\",\"line\":[{\"start\":0,\"value\":\" \"}],\"synced\":false}]", 
 		"rgAlbumGain": -6.4, "rgAlbumPeak": 0.810242, "rgTrackGain": -6.4, "rgTrackPeak": 0.810242,
 		"createdAt": nowStr, "updatedAt": nowStr,
 	}
