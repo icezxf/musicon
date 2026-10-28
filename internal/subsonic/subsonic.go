@@ -2190,3 +2190,18 @@ func albumID(name, artist string) string {
 	h := md5.Sum([]byte(name + "|" + artist))
 	return "al-" + hex.EncodeToString(h[:8])
 }
+
+func (h *Handler) getFavoriteArtists(user string) map[string]bool {
+	m := map[string]bool{}
+	rows, err := h.DB.DB.Query("SELECT item_id FROM user_favorites WHERE username = ? AND kind = 'artist'", user)
+	if err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				m[id] = true
+			}
+		}
+		rows.Close()
+	}
+	return m
+}
