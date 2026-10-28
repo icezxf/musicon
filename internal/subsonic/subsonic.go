@@ -213,7 +213,6 @@ func (h *Handler) getArtist(w http.ResponseWriter, r *http.Request, user string)
 	albumList := make([]map[string]any, 0)
 	for _, a := range albums {
 		aID := albumID(a.name, a.artist)
-		// 【严格对齐官方文档】只输出 8 个属性
 		albumList = append(albumList, map[string]any{
 			"@id": aID, "@name": a.name, "@coverArt": aID, "@songCount": a.count, 
 			"@created": "2024-01-01T00:00:00.000Z", "@duration": a.dur, 
@@ -465,7 +464,6 @@ func (h *Handler) getMusicDirectory(w http.ResponseWriter, r *http.Request, user
 			for _, n := range splitArtists(s.Artist) { if artistID(n) == id { artistName = n; matched = true; break } }
 			if !matched { continue }
 			aID := albumID(s.Album, s.Artist)
-			// 【严格对齐官方】子目录属性精简，不包含多余的 @name 和 @album
 			if _, ok := albumMap[aID]; !ok { albumMap[aID] = map[string]any{"@id": aID, "@parent": id, "@isDir": true, "@title": s.Album, "@artist": s.Artist, "@coverArt": aID, "@created": "2024-01-01T00:00:00.000Z"} }
 		}
 		dirName = artistName; parent = "1"
@@ -652,8 +650,43 @@ func (h *Handler) getCoverArt(w http.ResponseWriter, r *http.Request, user strin
 }
 
 func (h *Handler) serveArtistCover(w http.ResponseWriter, r *http.Request, user, id string, size int) {
-	name := r.URL.Query().Get("artist_name"); if name == "" { name = h.resolveArtistName(id, user) }
-	if h.NCM != nil && name != "" && name != id { if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" { if proxyImage(w, d.Pic) { return } } }
+	name := r.URL.Query().Get("artist_name")
+	if name == "" {
+		name = h.resolveArtistName(id, user)
+	}
+
+	// 1. 优先尝试查 NCM 获取歌手真实头像
+	if h.NCM != nil && name != "" && name != id {
+		if d, err := h.NCM.GetArtistDetail(name); err == nil && d.Pic != "" {
+			if proxyImage(w, d.Pic) {
+				return
+			}
+		}
+	}
+
+	// 2. 如果 NCM 查不到，回退：遍历歌曲，拿该歌手第一首有封面的歌的封面！
+	cleanID := strings.TrimPrefix(id, "ar-")
+	songs := h.visibleSongs(user)
+	for _, s := range songs {
+		matched := false
+		for _, n := range splitArtists(s.Artist) {
+			fullMD5 := fmt.Sprintf("%x", md5.Sum([]byte(n)))
+			if artistID(n) == id || fullMD5 == cleanID {
+				matched = true
+				break
+			}
+		}
+		if matched && s.CoverPath != "" {
+			if size > 0 {
+				h.serveThumb(w, r, s.CoverPath, size)
+			} else {
+				serveLocalCover(w, r, s.CoverPath)
+			}
+			return
+		}
+	}
+
+	// 3. 如果实在找不到，返回默认图
 	serveDefaultCover(w)
 }
 
@@ -784,15 +817,28 @@ func (h *Handler) getArtistInfo(w http.ResponseWriter, r *http.Request, user str
 
 func (h *Handler) resolveArtistName(id, user string) string {
 	if id == "" { return "" }
+	cleanID := strings.TrimPrefix(id, "ar-")
 	songs := h.visibleSongs(user)
-	for _, s := range songs { for _, name := range splitArtists(s.Artist) { if artistID(name) == id || fmt.Sprintf("%x", md5.Sum([]byte(name))) == id || name == id { return name } } }
+	for _, s := range songs { 
+		for _, name := range splitArtists(s.Artist) { 
+			fullMD5 := fmt.Sprintf("%x", md5.Sum([]byte(name)))
+			if artistID(name) == id || fullMD5 == cleanID || name == id || name == cleanID { 
+				return name 
+			} 
+		} 
+	}
 	return id
 }
 
 func (h *Handler) getArtistImage(w http.ResponseWriter, r *http.Request, user string) {
-	id := r.URL.Query().Get("id"); sizeStr := r.URL.Query().Get("size"); size := 0
-	if sizeStr != "" { if n, err := strconv.Atoi(sizeStr); err == nil && n > 0 && n <= 2000 { size = n } }
-	if strings.HasPrefix(id, "ar-") { id = strings.TrimPrefix(id, "ar-") }
+	id := r.URL.Query().Get("id")
+	sizeStr := r.URL.Query().Get("size")
+	size := 0
+	if sizeStr != "" {
+		if n, err := strconv.Atoi(sizeStr); err == nil && n > 0 && n <= 2000 {
+			size = n
+		}
+	}
 	h.serveArtistCover(w, r, user, id, size)
 }
 
@@ -840,7 +886,6 @@ func songToMap(s *db.Song) map[string]any {
 	aID := albumID(s.Album, s.Artist); arID := artistID(s.Artist); coverArt := s.ID; if s.CoverPath == "" { coverArt = aID }
 	track := s.TrackNumber; if track <= 0 { track = 1 }; disc := s.DiscNumber; if disc <= 0 { disc = 1 }
 	
-	// 【绝对修复】去掉了外部的 "artists" 属性，只保留官方要求的原属性
 	return map[string]any{"@id": s.ID, "@parent": aID, "@isDir": false, "@title": s.Title, "@album": s.Album, "@artist": s.Artist, "@albumArtist": s.AlbumArtist, "@displayArtist": s.Artist, "@displayAlbumArtist": s.AlbumArtist, "@track": track, "@discNumber": disc, "@year": s.Year, "@genre": s.Genre, "@coverArt": coverArt, "@size": s.FileSize, "@contentType": ct, "@suffix": suffix, "@duration": s.Dur, "@bitRate": s.Bitrate, "@path": s.Path, "@albumId": aID, "@artistId": arID, "@type": "music", "@created": "2024-01-01T00:00:00.000Z", "@isVideo": false, "@samplingRate": s.SampleRate, "@channelCount": s.Channels, "@composer": s.Composer, "@isrc": s.ISRC}
 }
 
